@@ -815,6 +815,8 @@ int LinuxDvbSwitch(Context_t  *context, char *type)
                         linuxdvb_err("AUDIO_SET_BYPASS_MODE: ERROR %d, %s\n", errno, strerror(errno));
                         if (context->playback->isDash)
                             goto audio_switch_done;
+                        /* only logged, the track is switched all the same */
+                        ret = 0;
                     }
                 }
 
