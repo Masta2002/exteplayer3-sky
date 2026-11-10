@@ -366,13 +366,23 @@ static void process_suburi(PlayFiles_t *play_files)
     if( p )
     {
         size_t part_len = (size_t) (p - orig_file);
+        char *first_file = malloc(part_len + 1);
+        char *second_file = malloc(strlen(p + 8) + 1);
 
-        play_files->szFirstFile = malloc(part_len + 1);
+        if (!first_file || !second_file)
+        {
+            /* keep the uri as it is */
+            free(first_file);
+            free(second_file);
+            return;
+        }
+
+        play_files->szFirstFile = first_file;
         memcpy(play_files->szFirstFile, orig_file, part_len);
         play_files->szFirstFile[part_len] = '\0';
 
         part_len = strlen(p + 8);
-        play_files->szSecondFile = malloc(part_len + 1);
+        play_files->szSecondFile = second_file;
         memcpy(play_files->szSecondFile, p+8, part_len);
         play_files->szSecondFile[part_len] = '\0';
 
