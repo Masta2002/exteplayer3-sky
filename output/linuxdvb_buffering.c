@@ -212,6 +212,11 @@ static void LinuxDvbBuffThread(Context_t *context)
     }
     
     pthread_mutex_lock(&bufferingMtx);
+    /* no write is running any more: release a flush that waits for its end */
+    g_bDuringWrite = false;
+    g_bWritingAudio = false;
+    g_bSignalWriteFinish = false;
+    pthread_cond_broadcast(&bufferingWriteFinishedCond);
     pthread_cond_signal(&bufferingExitCond);
     pthread_mutex_unlock(&bufferingMtx);
     
