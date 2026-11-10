@@ -135,18 +135,28 @@ static char *mov_get_text(const char *str, int len)
     const char *p_str = str;
     const char *end = str + len;
 
-    while (p_str < end && !((unsigned char)*p_str & 0x80) && *p_str != ' ')
+    /* a tx3g sample starts with the 16 bit length of its text, style boxes
+     * can follow the text */
+    if (len >= 2 && (((unsigned char)str[0] << 8) | (unsigned char)str[1]) <= len - 2)
     {
-        p_str++;
+        p_str = str + 2;
+        len = ((unsigned char)str[0] << 8) | (unsigned char)str[1];
+    }
+    else
+    {
+        while (p_str < end && !((unsigned char)*p_str & 0x80) && *p_str != ' ')
+        {
+            p_str++;
+        }
+
+        /* what is left of the packet after the skipped bytes */
+        len = (int)(end - p_str);
     }
 
-    if (p_str >= end)
+    if (len <= 0)
     {
         return strdup("");
     }
-
-    /* what is left of the packet after the skipped bytes */
-    len = (int)(end - p_str);
 
     /* an escaped character takes two bytes */
     char *result = malloc(2 * (size_t)len + 1);
