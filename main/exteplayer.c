@@ -754,6 +754,11 @@ static int ParseParams(int argc,char* argv[], PlayFiles_t *playbackFiles, int *p
             if (optarg[0] != '\0')
             {
                 playbackFiles->szSecondFile = map_inter_file_path(optarg);
+                if (NULL == playbackFiles->szSecondFile)
+                {
+                    printf("file: [%s] cannot be read\n", optarg);
+                    ret = -1;
+                }
             }
             break;
         case 'h':
@@ -833,6 +838,11 @@ static int ParseParams(int argc,char* argv[], PlayFiles_t *playbackFiles, int *p
             if (optarg[0] != '\0')
             {
                 playbackFiles->szFirstMoovAtomFile = map_inter_file_path(optarg);
+                if (NULL == playbackFiles->szFirstMoovAtomFile)
+                {
+                    printf("file: [%s] cannot be read\n", optarg);
+                    ret = -1;
+                }
             }
             break;
 
