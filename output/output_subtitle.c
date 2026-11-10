@@ -145,6 +145,9 @@ static char *mov_get_text(const char *str, int len)
         return strdup("");
     }
 
+    /* what is left of the packet after the skipped bytes */
+    len = (int)(end - p_str);
+
     /* an escaped character takes two bytes */
     char *result = malloc(2 * (size_t)len + 1);
 
