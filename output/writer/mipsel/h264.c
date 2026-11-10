@@ -74,6 +74,7 @@ static int                     avc3 = 0;
 static int                     sps_pps_in_stream = 0;
 static uint8_t                 *last_private_data;
 static unsigned int            last_private_size;
+static int                     resetPending = 0;
 /* ***************************** */
 /* Prototypes                    */
 /* ***************************** */
@@ -315,17 +316,13 @@ static int32_t PreparCodecData(unsigned char *data, unsigned int cd_len, unsigne
     return ret;
 }
 
+/* reset() is called from the command thread while the demuxer thread can be
+ * inside writeData(), blocked in the write with CodecData in its iovec. The
+ * state and the buffers therefore belong to writeData() alone: reset() only
+ * leaves a request and the next writeData() starts over. */
 static int reset()
 {
-    free(last_private_data);
-    last_private_data = NULL;
-    last_private_size = 0;
-    free(CodecData);
-    CodecData = NULL;
-    CodecDataLen = 0;
-    initialHeader = 1;
-    avc3 = 0;
-    sps_pps_in_stream = 0;
+    __atomic_store_n(&resetPending, 1, __ATOMIC_RELEASE);
     return 0;
 }
 
@@ -364,6 +361,14 @@ static int writeData(void* _call)
     {
         h264_err("file pointer < 0. ignoring ...\n");
         return 0;
+    }
+
+    if (__atomic_exchange_n(&resetPending, 0, __ATOMIC_ACQ_REL))
+    {
+        /* CodecData is rebuilt below, last_private_data stays valid */
+        initialHeader = 1;
+        avc3 = 0;
+        sps_pps_in_stream = 0;
     }
 
     if (call->private_data && call->private_size &&
