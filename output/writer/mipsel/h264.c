@@ -125,15 +125,17 @@ static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, 
         if (nalType == 7) 
         { /* SPS */
         
-            // 16 bits size
-            sps[spsIdx++] = (uint8_t)(0xFF & (nalLen >> 8));
-            sps[spsIdx++] = (uint8_t)(0xFF & nalLen);
-            
-            if (spsIdx + nalLen >= sizeof(sps))
+            /* checked before the size is stored: spsIdx is 8 bit wide */
+            if (spsIdx + 2 + nalLen >= sizeof(sps))
             {
                 h264_err("SPS no free space to copy...\n");
                 return -1;
             }
+
+            // 16 bits size
+            sps[spsIdx++] = (uint8_t)(0xFF & (nalLen >> 8));
+            sps[spsIdx++] = (uint8_t)(0xFF & nalLen);
+
             memcpy(&(sps[spsIdx]), d + 4, nalLen);
             spsIdx += nalLen;
             
@@ -144,15 +146,16 @@ static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, 
         else if (nalType == 8)
         { /* PPS */
 
-            // 16 bits size
-            pps[ppsIdx++] = (uint8_t)(0xFF & (nalLen >> 8));
-            pps[ppsIdx++] = (uint8_t)(0xFF & nalLen);
-            
-            if (ppsIdx + nalLen >= sizeof(sps))
+            if (ppsIdx + 2 + nalLen >= sizeof(pps))
             {
                 h264_err("PPS not free space to copy...\n");
                 return -1;
             }
+
+            // 16 bits size
+            pps[ppsIdx++] = (uint8_t)(0xFF & (nalLen >> 8));
+            pps[ppsIdx++] = (uint8_t)(0xFF & nalLen);
+
             memcpy(&(pps[ppsIdx]), d + 4, nalLen);
             ppsIdx += nalLen;
             
@@ -162,9 +165,20 @@ static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, 
         }
         d += 4 + nalLen;
     }
+    /* profile and level are taken from the first SPS */
+    if (numSps == 0 || spsIdx < 6)
+    {
+        return -1;
+    }
+
     uint32_t idx = 0;
-    *ppExtraData = malloc(7 + spsIdx + ppsIdx);
-    aExtraData = *ppExtraData;
+    aExtraData = malloc(7 + spsIdx + ppsIdx);
+    if (!aExtraData)
+    {
+        h264_err("allocating codec data failed\n");
+        return -1;
+    }
+    *ppExtraData = aExtraData;
     aExtraData[idx++] = 0x1;            // version
     aExtraData[idx++] = sps[3];         // profile
     aExtraData[idx++] = sps[4];         // profile compat
@@ -308,6 +322,11 @@ static int32_t PreparCodecData(unsigned char *data, unsigned int cd_len, unsigne
     if (ret == 0)
     {
         CodecData = malloc(tmp_len);
+        if (!CodecData)
+        {
+            h264_err("allocating codec data failed\n");
+            return -1;
+        }
         memcpy(CodecData, tmp, tmp_len);
         CodecDataLen = tmp_len;
         *NalLength = (data[4] & 0x03) + 1;
