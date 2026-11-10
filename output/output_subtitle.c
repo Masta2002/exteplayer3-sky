@@ -421,6 +421,8 @@ static int Write(void *_context, void *data)
         }
 
         Flush();
+        /* the packet belongs to the track selected before, not to this encoding */
+        return cERR_SUBTITLE_NO_ERROR;
     }
     context->manager->subtitle->Command(context, MANAGER_GETENCODING, &Encoding);
 
