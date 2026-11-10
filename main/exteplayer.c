@@ -129,8 +129,59 @@ void E2iSendMsg(const char *format, ...)
     va_end(args);
 }
 
+/* Length of the well-formed UTF-8 sequence (2..4 bytes, no overlong form,
+ * no surrogate, at most U+10FFFF) at p, 0 when there is none. Stops at the
+ * terminating NUL. */
+static size_t Utf8SequenceLength(const unsigned char *p)
+{
+    unsigned char lo = 0x80;
+    unsigned char hi = 0xBF;
+    size_t len;
+    size_t i;
+
+    if (p[0] >= 0xC2 && p[0] <= 0xDF)
+    {
+        len = 2;
+    }
+    else if (p[0] >= 0xE0 && p[0] <= 0xEF)
+    {
+        len = 3;
+        if (p[0] == 0xE0)
+            lo = 0xA0;
+        else if (p[0] == 0xED)
+            hi = 0x9F;
+    }
+    else if (p[0] >= 0xF0 && p[0] <= 0xF4)
+    {
+        len = 4;
+        if (p[0] == 0xF0)
+            lo = 0x90;
+        else if (p[0] == 0xF4)
+            hi = 0x8F;
+    }
+    else
+    {
+        return 0;
+    }
+
+    if (p[1] < lo || p[1] > hi)
+    {
+        return 0;
+    }
+    for (i = 2; i < len; ++i)
+    {
+        if ((p[i] & 0xC0) != 0x80)
+        {
+            return 0;
+        }
+    }
+    return len;
+}
+
 /* Writes src into dst as the content of a JSON string: '"', '\\' and
- * control characters are escaped. What does not fit into size is cut off
+ * control characters are escaped. A byte from 0x80 on that is not part of
+ * a well-formed UTF-8 sequence (a Latin-1 tag) is written as \u00xx, so
+ * the line stays valid UTF-8. What does not fit into size is cut off
  * between two characters, never inside an escape or a UTF-8 sequence.
  * The caller owns the buffer, the messages come from more than one thread. */
 static const char *JsonEscape(char *dst, size_t size, const char *src)
@@ -156,14 +207,18 @@ static const char *JsonEscape(char *dst, size_t size, const char *src)
         {
             out = 6;
         }
-        else if (*p >= 0xC0)
+        else if (*p >= 0x80)
         {
-            size_t len = *p >= 0xF0 ? 4 : (*p >= 0xE0 ? 3 : 2);
-            while (in < len && (p[in] & 0xC0) == 0x80)
+            in = Utf8SequenceLength(p);
+            if (in)
             {
-                ++in;
+                out = in;
             }
-            out = in;
+            else
+            {
+                in = 1;
+                out = 6;
+            }
         }
 
         if (pos + out >= size)
