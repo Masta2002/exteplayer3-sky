@@ -144,6 +144,11 @@ static int32_t PreparCodecData(unsigned char *data, unsigned int cd_len, unsigne
                 }
                 
                 CodecData = malloc(tmp_len);
+                if (!CodecData)
+                {
+                    h264_err("allocating codec data failed\n");
+                    return ret;
+                }
                 memcpy(CodecData, tmp, tmp_len);
                 CodecDataLen = tmp_len;
             }
