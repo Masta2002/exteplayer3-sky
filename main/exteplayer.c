@@ -1122,7 +1122,7 @@ int main(int argc, char* argv[])
         g_player->output->Command(g_player, OUTPUT_SET_BUFFER_SIZE, &linuxDvbBufferSizeMB);
     
     g_player->manager->video->Command(g_player, MANAGER_REGISTER_UPDATED_TRACK_INFO, UpdateVideoTrack);
-    if (strncmp(playbackFiles.szFirstFile, "rtmp", 4) && strncmp(playbackFiles.szFirstFile, "ffrtmp", 4))
+    if (strncmp(playbackFiles.szFirstFile, "rtmp", 4) && strncmp(playbackFiles.szFirstFile, "ffrtmp", 6))
     {
         g_player->playback->noprobe = 1;
     }
