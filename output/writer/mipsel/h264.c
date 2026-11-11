@@ -165,8 +165,8 @@ static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, 
         }
         d += 4 + nalLen;
     }
-    /* profile and level are taken from the first SPS */
-    if (numSps == 0 || spsIdx < 6)
+    /* profile and level are taken from the first SPS, the SPS count has 5 bits */
+    if (numSps == 0 || numSps > 31 || spsIdx < 6)
     {
         return -1;
     }
