@@ -2836,6 +2836,15 @@ int32_t container_ffmpeg_init_av_context(Context_t *context, char *filename, uin
             if (2 == haveNativeProto)
             {
                 filename = malloc(strlen(baseUri) + 2 + 1);
+                if (!filename)
+                {
+                    ffmpeg_err("cannot allocate the rtmp uri\n");
+                    free(baseUri);
+                    av_dict_free(&avio_opts);
+                    avformat_free_context(avContextTab[AVIdx]);
+                    avContextTab[AVIdx] = NULL;
+                    return cERR_CONTAINER_FFMPEG_NOMEM;
+                }
                 strncpy(filename, "ff", 2);
                 strcpy(filename+2, baseUri);
                 free(baseUri);
