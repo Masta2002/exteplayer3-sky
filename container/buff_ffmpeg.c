@@ -273,7 +273,7 @@ static void ffmpeg_filler(Context_t *context, int32_t id, int32_t* inpause, int3
     while( (flag == 0 && avContextTab[0] != NULL && avContextTab[0]->pb != NULL && rwdiff > FILLBUFDIFF) || 
            (flag == 1 && hasfillerThreadStarted[id] == 1 && avContextTab[0] != NULL && avContextTab[0]->pb != NULL && rwdiff > FILLBUFDIFF) )
     {
-         if( 0 == PlaybackDieNow(0))
+         if( 0 != PlaybackDieNow(0))
          {
             break;
          }
