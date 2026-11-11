@@ -87,6 +87,8 @@ static pthread_mutex_t *g_pDVBMtx = NULL;
 static bool g_bDuringWrite = false;
 static bool g_bWritingAudio = false;
 static bool g_bSignalWriteFinish = false;
+/* LinuxDvbBuffClose() asks the thread to end, guarded by bufferingMtx */
+static bool g_bClosing = false;
 
 static void *g_pWriteStamp = NULL;
 
@@ -153,6 +155,12 @@ static void LinuxDvbBuffThread(Context_t *context)
             nodePtr = NULL;
             /* signal that we free some space in queue */
             pthread_cond_signal(&bufferingDataConsumedCond);
+        }
+
+        if (g_bClosing)
+        {
+            pthread_mutex_unlock(&bufferingMtx);
+            break;
         }
         
         if (!bufferingQueueHead)
@@ -257,6 +265,7 @@ int32_t LinuxDvbBuffOpen(Context_t *context, char *type, int outfd, void *mtx)
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
         g_pDVBMtx = mtx;
+        g_bClosing = false;
 
         /* init synchronization prymitives, the thread uses them at once */
         pthread_mutex_init(&bufferingMtx, NULL);
@@ -316,6 +325,8 @@ int32_t LinuxDvbBuffClose(Context_t *context)
         WriteWakeUp();
         
         pthread_mutex_lock(&bufferingMtx);
+        /* the thread leaves its loop also when PlaybackDieNow is not set */
+        g_bClosing = true;
         /* wake up if thread is waiting for data */ 
         pthread_cond_signal(&bufferingdDataAddedCond);
         
