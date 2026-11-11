@@ -138,6 +138,7 @@ void pcm_audio_export_set(int enabled)
 static int32_t container_ffmpeg_seek_bytes(off_t pos);
 static int32_t container_ffmpeg_seek(Context_t *context, int64_t sec, uint8_t absolute);
 static int32_t container_ffmpeg_get_length(Context_t *context, int64_t *length);
+static int32_t container_ffmpeg_stop(Context_t *context);
 static int64_t calcPts(uint32_t avContextIdx, AVStream *stream, int64_t pts);
 static int64_t calcDts(uint32_t avContextIdx, AVStream *stream, int64_t pts);
 static int64_t calcConvertedPts(AVStream *stream, AVRational time_base, int64_t pts, int dts);
@@ -3085,6 +3086,10 @@ int32_t container_ffmpeg_init(Context_t *context, PlayFiles_t *playFilesNames)
     
     if(0 != res)
     {
+        /* the first input is open, and container_ffmpeg_stop() works on a
+         * running container only: let it release what init has set up */
+        isContainerRunning = 1;
+        container_ffmpeg_stop(context);
         return res;
     }
     
