@@ -2366,6 +2366,8 @@ typedef struct CustomIOCtx_t
     uint64_t iMoovAtomOffset;
     /* reads in a row that SAM_ReadFuncWait() has waited for */
     uint32_t iOpenWaits;
+    /* all reads that it has waited for on this input */
+    uint32_t iOpenWaitsTotal;
 } CustomIOCtx_t;
 
 CustomIOCtx_t* custom_io_tab[IPTV_AV_CONTEXT_MAX_NUM] = {NULL, NULL};
@@ -2426,17 +2428,21 @@ int SAM_ReadFunc(void *ptr, uint8_t *buffer, int lSize)
  * current end of a growing file SAM_ReadFunc() returns 0, and libavformat
  * asks again at once: avio_read(), matroska_resync() and avi_sync() loop
  * without a pause until the download has delivered more. Wait 100 ms
- * before the retry, for at most 10 seconds in a row; after that, and when
- * the player is closing, the 0 is passed on as SAM_ReadFunc() gives it. */
+ * before the retry, for at most 10 seconds in a row and 60 seconds in all
+ * per input; after that, and when the player is closing, the 0 is passed
+ * on as SAM_ReadFunc() gives it. */
 #define SAM_OPEN_WAITS_MAX 100
+#define SAM_OPEN_WAITS_TOTAL_MAX 600
 static int SAM_ReadFuncWait(void *ptr, uint8_t *buffer, int lSize)
 {
     CustomIOCtx_t *io = (CustomIOCtx_t *)ptr;
     int ret = SAM_ReadFunc(ptr, buffer, lSize);
 
-    if (ret == 0 && io->iOpenWaits < SAM_OPEN_WAITS_MAX && !PlaybackDieNow(0))
+    if (ret == 0 && io->iOpenWaits < SAM_OPEN_WAITS_MAX &&
+        io->iOpenWaitsTotal < SAM_OPEN_WAITS_TOTAL_MAX && !PlaybackDieNow(0))
     {
         io->iOpenWaits += 1;
+        io->iOpenWaitsTotal += 1;
         usleep(100000);
         ret = SAM_ReadFunc(ptr, buffer, lSize);
     }
