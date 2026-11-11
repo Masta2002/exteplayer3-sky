@@ -387,8 +387,11 @@ static char *map_inter_file_path(const char *filename)
     }
 
     char *ret = malloc(filename_len+2);
-    strcpy(ret, filname_prefix);
-    strcat(ret, filename);
+    if (ret)
+    {
+        strcpy(ret, filname_prefix);
+        strcat(ret, filename);
+    }
 
     if( filename2 )
     {
