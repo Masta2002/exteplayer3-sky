@@ -438,6 +438,7 @@ ssize_t BufferingWriteV(int fd, const struct iovec *iov, int ic)
     uint8_t *dataPtr = NULL;
     uint32_t chunkSize = 0;
     uint32_t i = 0;
+    bool queued = false;
     
     buff_printf(60, "ENTER\n");
     if (fd == videofd)
@@ -510,10 +511,17 @@ ssize_t BufferingWriteV(int fd, const struct iovec *iov, int ic)
             
             /* signal that we added some data to queue */
             pthread_cond_signal(&bufferingdDataAddedCond);
+            queued = true;
             break;
         }
     }
     pthread_mutex_unlock(&bufferingMtx);
+    if (!queued)
+    {
+        /* the playback is terminated: the chunk is dropped */
+        free(nodePtr);
+        chunkSize -= sizeof(BufferingNode_t);
+    }
     buff_printf(60, "EXIT\n");
     return chunkSize;
 }
