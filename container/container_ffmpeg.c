@@ -3102,12 +3102,8 @@ int32_t container_ffmpeg_init(Context_t *context, PlayFiles_t *playFilesNames)
     context->playback->abortRequested = 0;
     int32_t res = container_ffmpeg_init_av_context(context, playFilesNames->szFirstFile, playFilesNames->iFirstFileSize, \
                                                    playFilesNames->szFirstMoovAtomFile, playFilesNames->iFirstMoovAtomOffset, 0);
-    if(0 != res)
-    {
-        return res;
-    }
 
-    if(playFilesNames->szSecondFile && playFilesNames->szSecondFile[0] != '\0')
+    if(0 == res && playFilesNames->szSecondFile && playFilesNames->szSecondFile[0] != '\0')
     {
         res = container_ffmpeg_init_av_context(context, playFilesNames->szSecondFile, playFilesNames->iSecondFileSize, \
                                                playFilesNames->szSecondMoovAtomFile, playFilesNames->iSecondMoovAtomOffset, 1);
@@ -3115,8 +3111,9 @@ int32_t container_ffmpeg_init(Context_t *context, PlayFiles_t *playFilesNames)
     
     if(0 != res)
     {
-        /* the first input is open, and container_ffmpeg_stop() works on a
-         * running container only: let it release what init has set up */
+        /* the PCM export and the network layer are set up, the first input
+         * may be open, and container_ffmpeg_stop() works on a running
+         * container only: let it release what init has set up */
         isContainerRunning = 1;
         container_ffmpeg_stop(context);
         return res;
