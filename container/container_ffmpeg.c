@@ -2560,12 +2560,38 @@ AVIOContext* container_ffmpeg_get_avio_context(CustomIOCtx_t *custom_io, size_t 
     }
     return avio_ctx;
 }
+
+/* Release what container_ffmpeg_get_avio_context() has set up for an input.
+ * libavformat does not close an I/O context that the caller has supplied. */
+static void container_ffmpeg_free_custom_io(int32_t AVIdx, AVIOContext **pb)
+{
+    if (*pb)
+    {
+        av_freep(&(*pb)->buffer);
+        av_freep(pb);
+    }
+    if (custom_io_tab[AVIdx])
+    {
+        if (custom_io_tab[AVIdx]->pMoovFile)
+        {
+            fclose(custom_io_tab[AVIdx]->pMoovFile);
+        }
+        if (custom_io_tab[AVIdx]->pFile)
+        {
+            fclose(custom_io_tab[AVIdx]->pFile);
+        }
+        free(custom_io_tab[AVIdx]);
+        custom_io_tab[AVIdx] = NULL;
+    }
+    use_custom_io[AVIdx] = 0;
+}
 #endif
 
 int32_t container_ffmpeg_init_av_context(Context_t *context, char *filename, uint64_t fileSize, char *moovAtomFile, uint64_t moovAtomOffset, int32_t AVIdx)
 {
     int32_t err = 0;
     AVInputFormat *fmt = NULL;
+    AVIOContext *custom_pb = NULL;
     avContextTab[AVIdx] = avformat_alloc_context();
     avContextTab[AVIdx]->interrupt_callback.callback = interrupt_cb;
     avContextTab[AVIdx]->interrupt_callback.opaque = context->playback;
@@ -2593,6 +2619,7 @@ int32_t container_ffmpeg_init_av_context(Context_t *context, char *filename, uin
         if(avio_ctx)
         {
             avContextTab[AVIdx]->pb = avio_ctx;
+            custom_pb = avio_ctx;
             use_custom_io[AVIdx] = 1;
         }
         else
@@ -2885,6 +2912,14 @@ int32_t container_ffmpeg_init_av_context(Context_t *context, char *filename, uin
             {
                 av_dict_free(&avio_opts);
             }
+#ifdef USE_CUSTOM_IO
+            /* avformat_open_input() has freed the context, but not the I/O
+             * context that it was given */
+            if (custom_pb)
+            {
+                container_ffmpeg_free_custom_io(AVIdx, &custom_pb);
+            }
+#endif
             return cERR_CONTAINER_FFMPEG_OPEN;
         }
     }
