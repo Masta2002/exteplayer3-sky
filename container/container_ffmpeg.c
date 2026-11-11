@@ -2594,6 +2594,11 @@ int32_t container_ffmpeg_init_av_context(Context_t *context, char *filename, uin
     AVInputFormat *fmt = NULL;
     AVIOContext *custom_pb = NULL;
     avContextTab[AVIdx] = avformat_alloc_context();
+    if (!avContextTab[AVIdx])
+    {
+        ffmpeg_err("cannot allocate the format context\n");
+        return cERR_CONTAINER_FFMPEG_NOMEM;
+    }
     avContextTab[AVIdx]->interrupt_callback.callback = interrupt_cb;
     avContextTab[AVIdx]->interrupt_callback.opaque = context->playback;
 
