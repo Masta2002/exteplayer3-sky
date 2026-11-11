@@ -287,12 +287,23 @@ static char *map_inter_file_path(const char *filename)
         FILE *f = fopen(filename + 7, "r");
         if( f != NULL )
         {
-            fseek(f, 0L, SEEK_END);
-            size_t file_size = ftell(f);
+            long file_size = -1;
+            if (0 == fseek(f, 0L, SEEK_END))
+            {
+                file_size = ftell(f);
+            }
             rewind(f);
 
-            filename2 = malloc(file_size+2);
-            size_t num = fread(filename2, 1, file_size, f);
+            if (file_size >= 0)
+            {
+                filename2 = malloc((size_t)file_size + 2);
+            }
+            if (!filename2)
+            {
+                fclose(f);
+                return NULL;
+            }
+            size_t num = fread(filename2, 1, (size_t)file_size, f);
             fclose(f);
 
             if (num > 0 && filename2[num-1] == '\n')
