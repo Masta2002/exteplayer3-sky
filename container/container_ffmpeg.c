@@ -2837,6 +2837,8 @@ int32_t container_ffmpeg_init_av_context(Context_t *context, char *filename, uin
             return cERR_CONTAINER_FFMPEG_OPEN;
         }
     }
+    /* the options no (de)muxer or protocol has taken are left in here */
+    av_dict_free(&avio_opts);
 
     if (AVIdx == 0)
         context->playback->isDash = avContextTab[0]->iformat &&
