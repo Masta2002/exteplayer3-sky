@@ -1110,7 +1110,8 @@ static int reset(Context_t  *context)
         ret = cERR_LINUXDVB_ERROR;
     } else
     {
-        writer->reset();
+        if (writer->reset)
+            writer->reset();
     }
 
     free(Encoding);
@@ -1121,11 +1122,12 @@ static int reset(Context_t  *context)
 
     if (writer == NULL)
     {
-        linuxdvb_err("unknown video codec %s\n",Encoding);
+        linuxdvb_err("unknown audio codec %s\n",Encoding);
         ret = cERR_LINUXDVB_ERROR;
     } else
     {
-        writer->reset();
+        if (writer->reset)
+            writer->reset();
     }
 
     free(Encoding);
