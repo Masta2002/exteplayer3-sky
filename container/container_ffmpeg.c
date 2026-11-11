@@ -2363,6 +2363,8 @@ typedef struct CustomIOCtx_t
     uint64_t iFileSize;
     char *szMoovAtomFile;
     uint64_t iMoovAtomOffset;
+    /* reads in a row that SAM_ReadFuncWait() has waited for */
+    uint32_t iOpenWaits;
 } CustomIOCtx_t;
 
 CustomIOCtx_t* custom_io_tab[IPTV_AV_CONTEXT_MAX_NUM] = {NULL, NULL};
@@ -2415,6 +2417,31 @@ int SAM_ReadFunc(void *ptr, uint8_t *buffer, int lSize)
         if (ferror(io->pFile) || (io->pMoovFile && ferror(io->pMoovFile)))
             return AVERROR(errno ? errno : EIO);
         return AVERROR_EOF;
+    }
+    return ret;
+}
+
+/* Read function while an input is opened in progressive playback. At the
+ * current end of a growing file SAM_ReadFunc() returns 0, and libavformat
+ * asks again at once: avio_read(), matroska_resync() and avi_sync() loop
+ * without a pause until the download has delivered more. Wait 100 ms
+ * before the retry, for at most 10 seconds in a row; after that, and when
+ * the player is closing, the 0 is passed on as SAM_ReadFunc() gives it. */
+#define SAM_OPEN_WAITS_MAX 100
+static int SAM_ReadFuncWait(void *ptr, uint8_t *buffer, int lSize)
+{
+    CustomIOCtx_t *io = (CustomIOCtx_t *)ptr;
+    int ret = SAM_ReadFunc(ptr, buffer, lSize);
+
+    if (ret == 0 && io->iOpenWaits < SAM_OPEN_WAITS_MAX && !PlaybackDieNow(0))
+    {
+        io->iOpenWaits += 1;
+        usleep(100000);
+        ret = SAM_ReadFunc(ptr, buffer, lSize);
+    }
+    if (ret > 0)
+    {
+        io->iOpenWaits = 0;
     }
     return ret;
 }
@@ -2516,7 +2543,8 @@ AVIOContext* container_ffmpeg_get_avio_context(CustomIOCtx_t *custom_io, size_t 
     avio_ctx_buffer = av_malloc(avio_ctx_buffer_size);
     if (avio_ctx_buffer)
     {
-        avio_ctx = avio_alloc_context(avio_ctx_buffer, avio_ctx_buffer_size, 0, custom_io, &SAM_ReadFunc, NULL, &SAM_SeekFunc);
+        avio_ctx = avio_alloc_context(avio_ctx_buffer, avio_ctx_buffer_size, 0, custom_io,
+                                      progressive_playback ? &SAM_ReadFuncWait : &SAM_ReadFunc, NULL, &SAM_SeekFunc);
     }
     if (!avio_ctx) 
     {
@@ -2885,6 +2913,15 @@ int32_t container_ffmpeg_init_av_context(Context_t *context, char *filename, uin
     {
         ffmpeg_err("Error avformat_find_stream_info\n");
     }
+
+#ifdef USE_CUSTOM_IO
+    /* opened: from here on the plain read function, as without the wait */
+    if (avContextTab[AVIdx] != NULL && avContextTab[AVIdx]->pb != NULL &&
+        avContextTab[AVIdx]->pb->read_packet == SAM_ReadFuncWait)
+    {
+        avContextTab[AVIdx]->pb->read_packet = SAM_ReadFunc;
+    }
+#endif
 
 //for buffered io
     if(avContextTab[AVIdx] != NULL && avContextTab[AVIdx]->pb != NULL && !context->playback->isTSLiveMode)
