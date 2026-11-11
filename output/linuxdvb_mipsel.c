@@ -1100,35 +1100,25 @@ static int Write(void  *_context, void *_out)
     return ret;
 }
 
-static int reset(Context_t  *context)
+/* Every command arrives once per type ("video", "audio"): reset the writer
+ * of that type only. */
+static int reset(Context_t  *context, char *type)
 {
     int ret = cERR_LINUXDVB_NO_ERROR;
     Writer_t*   writer;
     char * Encoding = NULL;
+    uint8_t video = !strcmp("video", type);
 
-    context->manager->video->Command(context, MANAGER_GETENCODING, &Encoding);
-
-    writer = getWriter(Encoding);
-
-    if (writer == NULL)
-    {
-        linuxdvb_err("unknown video codec %s\n",Encoding);
-        ret = cERR_LINUXDVB_ERROR;
-    } else
-    {
-        if (writer->reset)
-            writer->reset();
-    }
-
-    free(Encoding);
-
-    context->manager->audio->Command(context, MANAGER_GETENCODING, &Encoding);
+    if (video)
+        context->manager->video->Command(context, MANAGER_GETENCODING, &Encoding);
+    else
+        context->manager->audio->Command(context, MANAGER_GETENCODING, &Encoding);
 
     writer = getWriter(Encoding);
 
     if (writer == NULL)
     {
-        linuxdvb_err("unknown audio codec %s\n",Encoding);
+        linuxdvb_err("unknown %s codec %s\n", video ? "video" : "audio", Encoding);
         ret = cERR_LINUXDVB_ERROR;
     } else
     {
@@ -1157,7 +1147,7 @@ static int Command(void  *_context, OutputCmd_t command, void * argument) {
     }
     case OUTPUT_CLOSE: {
         ret = LinuxDvbClose(context, (char*)argument);
-        reset(context);
+        reset(context, (char*)argument);
         sCURRENT_PTS = 0;
         break;
     }
@@ -1167,14 +1157,14 @@ static int Command(void  *_context, OutputCmd_t command, void * argument) {
         break;
     }
     case OUTPUT_STOP: {
-        reset(context);
+        reset(context, (char*)argument);
         ret = LinuxDvbStop(context, (char*)argument);
         sCURRENT_PTS = 0;
         break;
     }
     case OUTPUT_FLUSH: {
         ret = LinuxDvbFlush(context, (char*)argument);
-        reset(context);
+        reset(context, (char*)argument);
         sCURRENT_PTS = 0;
         break;
     }
@@ -1191,9 +1181,9 @@ static int Command(void  *_context, OutputCmd_t command, void * argument) {
         break;
     }
     case OUTPUT_CLEAR: {
-        reset(context);
+        reset(context, (char*)argument);
         ret = LinuxDvbClear(context, (char*)argument);
-        reset(context);
+        reset(context, (char*)argument);
         sCURRENT_PTS = 0;
         break;
     }
