@@ -158,8 +158,8 @@ static char *mov_get_text(const char *str, int len)
         return strdup("");
     }
 
-    /* an escaped character takes two bytes */
-    char *result = malloc(2 * (size_t)len + 1);
+    /* an escaped character takes up to six bytes (\u00XX) */
+    char *result = malloc(6 * (size_t)len + 1);
 
     if (!result)
     {
@@ -189,7 +189,16 @@ static char *mov_get_text(const char *str, int len)
                 case '\n': *out_ptr++ = '\\'; *out_ptr++ = 'n'; break;
                 case '\r': *out_ptr++ = '\\'; *out_ptr++ = 'r'; break;
                 case '\t': *out_ptr++ = '\\'; *out_ptr++ = 't'; break;
-                default:   *out_ptr++ = p_str[i];
+                default:
+                    if ((unsigned char)p_str[i] < 0x20)
+                    {
+                        /* any other control character is not allowed raw in a JSON string */
+                        out_ptr += sprintf(out_ptr, "\\u%04x", (unsigned char)p_str[i]);
+                    }
+                    else
+                    {
+                        *out_ptr++ = p_str[i];
+                    }
             }
             i++;
         }
@@ -259,10 +268,10 @@ static char *mov_get_text(const char *str, int len)
 
 static char * json_string_escape(char *str)
 {
-    /* an escaped character takes two bytes */
+    /* an escaped character takes up to six bytes (\u00XX) */
     static char *tmp = NULL;
     static size_t tmpSize = 0;
-    size_t need = 2 * strlen(str) + 1;
+    size_t need = 6 * strlen(str) + 1;
     if (need > tmpSize)
     {
         char *n = realloc(tmp, need);
@@ -308,7 +317,15 @@ static char * json_string_escape(char *str)
             *ptr1++ = 't';
         break;
         default:
-            *ptr1++ = *ptr2;
+            if ((unsigned char)*ptr2 < 0x20)
+            {
+                /* any other control character is not allowed raw in a JSON string */
+                ptr1 += sprintf(ptr1, "\\u%04x", (unsigned char)*ptr2);
+            }
+            else
+            {
+                *ptr1++ = *ptr2;
+            }
             break;
         }
         
