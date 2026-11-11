@@ -212,6 +212,9 @@ static void LinuxDvbBuffThread(Context_t *context)
     }
     
     pthread_mutex_lock(&bufferingMtx);
+    /* the node written last is freed by the next turn of the loop only */
+    free(nodePtr);
+    nodePtr = NULL;
     /* no write is running any more: release a flush that waits for its end */
     g_bDuringWrite = false;
     g_bWritingAudio = false;
