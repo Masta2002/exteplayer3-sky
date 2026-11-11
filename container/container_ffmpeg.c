@@ -2833,7 +2833,6 @@ int32_t container_ffmpeg_init_av_context(Context_t *context, char *filename, uin
             {
                 av_dict_free(&avio_opts);
             }
-            releaseMutex(__FILE__, __FUNCTION__,__LINE__);
             return cERR_CONTAINER_FFMPEG_OPEN;
         }
     }
@@ -2938,7 +2937,6 @@ int32_t container_ffmpeg_init(Context_t *context, PlayFiles_t *playFilesNames)
     if (isContainerRunning) 
     {
         ffmpeg_err("ups already running?\n");
-        releaseMutex(__FILE__, __FUNCTION__,__LINE__);
         return cERR_CONTAINER_FFMPEG_RUNNING;
     }
 
