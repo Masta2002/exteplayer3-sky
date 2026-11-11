@@ -2028,7 +2028,7 @@ static void FFMPEGThread(Context_t *context)
                         }
                         
                         currentAudioPts = audioTrack->pts = pts = calcPts(cAVIdx, audioTrack->stream, next_out_pts);
-                        out_samples = swr_convert(swr, &output[0], out_samples, (const uint8_t **) &decoded_frame->data[0], in_samples);
+                        out_samples = swr_convert(swr, &output[0], out_samples, (const uint8_t **) decoded_frame->extended_data, in_samples);
                         if (out_samples < 0)
                         {
                             ffmpeg_err("PCM resampling failed: %d\n", out_samples);
