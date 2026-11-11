@@ -2724,6 +2724,15 @@ int32_t container_ffmpeg_init_av_context(Context_t *context, char *filename, uin
         {
             char *baseUri = strdup(filename);
             char *token  = NULL;
+
+            if (!baseUri)
+            {
+                ffmpeg_err("cannot allocate the rtmp uri\n");
+                av_dict_free(&avio_opts);
+                avformat_free_context(avContextTab[AVIdx]);
+                avContextTab[AVIdx] = NULL;
+                return cERR_CONTAINER_FFMPEG_NOMEM;
+            }
             
             // check if uri have additional params
             if ((token = strtok(baseUri, " ")) != NULL )
@@ -2732,6 +2741,18 @@ int32_t container_ffmpeg_init_av_context(Context_t *context, char *filename, uin
                 char *swfUrl = malloc(strlen(filename));
                 char *swfVfy = malloc(strlen(filename));
                 char *poseq, *key, *value;
+                if (!conn || !swfUrl || !swfVfy)
+                {
+                    ffmpeg_err("cannot allocate the rtmp parameters\n");
+                    free(conn);
+                    free(swfUrl);
+                    free(swfVfy);
+                    free(baseUri);
+                    av_dict_free(&avio_opts);
+                    avformat_free_context(avContextTab[AVIdx]);
+                    avContextTab[AVIdx] = NULL;
+                    return cERR_CONTAINER_FFMPEG_NOMEM;
+                }
                 conn[0] = '\0';
                 swfUrl[0] = '\0';
                 swfVfy[0] = '\0';
