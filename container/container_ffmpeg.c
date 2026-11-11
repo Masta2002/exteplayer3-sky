@@ -2886,6 +2886,15 @@ int32_t container_ffmpeg_init_av_context(Context_t *context, char *filename, uin
 //for buffered io
     if(avContextTab[AVIdx] != NULL && avContextTab[AVIdx]->pb != NULL && !context->playback->isTSLiveMode)
     {
+        /* ffmpeg_read_wrapper() has one read function for all inputs: once
+         * the first input reads through it, a second input with another
+         * kind of I/O (local file plus http) must not replace that function */
+        if (AVIdx > 0 && avContextTab[0] && avContextTab[0]->pb &&
+            avContextTab[0]->pb->read_packet == ffmpeg_read_wrapper &&
+            avContextTab[AVIdx]->pb->read_packet != ffmpeg_real_read_org)
+        {
+            return 0;
+        }
         ffmpeg_real_read_org = avContextTab[AVIdx]->pb->read_packet;
         
         if(0 ==AVIdx && strstr(filename, "://") != 0 && 
