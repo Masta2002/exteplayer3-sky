@@ -873,6 +873,8 @@ audio_switch_done:
                     if (ret < 0)
                     {
                         linuxdvb_err("VIDEO_SET_STREAMTYPE: ERROR %d, %s\n", errno, strerror(errno));
+                        /* only logged, the decoder is restarted all the same */
+                        ret = 0;
                     }
                 }
 
