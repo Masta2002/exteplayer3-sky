@@ -709,7 +709,7 @@ int LinuxDvbPts(Context_t  *context __attribute__((unused)), unsigned long long 
     {
         ret = cERR_LINUXDVB_NO_ERROR;
     }
-    else
+    else if (videofd > -1)
     {
         linuxdvb_err("VIDEO_GET_PTS: ERROR %d, %s\n", errno, strerror(errno));
     }
@@ -720,7 +720,7 @@ int LinuxDvbPts(Context_t  *context __attribute__((unused)), unsigned long long 
         {
             ret = cERR_LINUXDVB_NO_ERROR;
         }
-        else
+        else if (audiofd > -1)
         {
             linuxdvb_err("AUDIO_GET_PTS: ERROR %d, %s\n", errno, strerror(errno));
         }
