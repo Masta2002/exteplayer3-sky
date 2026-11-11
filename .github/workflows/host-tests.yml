@@ -1,0 +1,206 @@
+name: Host tests
+
+# Runs the host tests of this repository (tests/run.sh, tests/build.sh,
+# tests/integration.py, tests/hls_switch.py - see "Native validation" in the
+# README) against branches of it, with a native build of the patched FFmpeg
+# they belong to. The workflow lives on the branch ci/host-tests only.
+#
+# Actions -> Host tests -> Run workflow (branch ci/host-tests),
+# refs = the branches or commits to test, separated by spaces.
+
+on:
+  workflow_dispatch:
+    inputs:
+      refs:
+        description: Branches or commits of this repository to test (space separated)
+        default: master
+  push:
+    branches: [ci/host-tests]
+
+permissions:
+  contents: read
+
+env:
+  # skyjet18/FFmpeg, branch release/6.1-patched
+  FFMPEG_REPO: skyjet18/FFmpeg
+  FFMPEG_COMMIT: 0da0223cd1add40eabaad04e1ce609f05670a1de
+  # static libraries, the ffmpeg tool for the generated test media, libxml2
+  # for DASH; nothing picked up from the runner by chance
+  FFMPEG_CONFIGURE: --disable-autodetect --disable-doc --disable-ffplay --disable-debug --enable-libxml2 --enable-zlib
+  FFMPEG_EXTRA_LIBS: -lxml2 -lz
+  FFMPEG_SOURCE: /home/runner/ffmpeg-host/src
+  FFMPEG_BUILD: /home/runner/ffmpeg-host/build
+  FFMPEG_TEST_PROGRAMS: >-
+    libavformat/tests/hls_http libavformat/tests/dash_http
+    libavformat/tests/hls_selection libavformat/tests/dash_live libavformat/tests/mpegts_probe
+
+jobs:
+  ffmpeg:
+    name: FFmpeg (native, static)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+      refs: ${{ steps.key.outputs.refs }}
+    steps:
+    - name: Cache key and list of refs
+      id: key
+      env:
+        REFS: ${{ inputs.refs }}
+      run: |
+        sum=$(printf '%s\n' "$FFMPEG_CONFIGURE" "$FFMPEG_TEST_PROGRAMS" "$ImageOS" | sha256sum | cut -c1-16)
+        echo "key=ffmpeg-host-$FFMPEG_COMMIT-$sum" >> "$GITHUB_OUTPUT"
+        python3 -c 'import json, os; print("refs=" + json.dumps(os.environ.get("REFS", "").split() or ["master"]))' >> "$GITHUB_OUTPUT"
+        cat "$GITHUB_OUTPUT"
+
+    - name: Cache FFmpeg
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: /home/runner/ffmpeg-host
+        key: ${{ steps.key.outputs.key }}
+
+    - name: Install dependencies
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config nasm libxml2-dev zlib1g-dev
+
+    # out of tree: the tests want the source and the build directory
+    - name: Build FFmpeg
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p "$FFMPEG_SOURCE" "$FFMPEG_BUILD"
+        curl -sL --retry 5 --retry-all-errors "https://github.com/$FFMPEG_REPO/archive/$FFMPEG_COMMIT.tar.gz" -o ff.tar.gz
+        tar -xzf ff.tar.gz --strip-components=1 -C "$FFMPEG_SOURCE"
+        cd "$FFMPEG_BUILD"
+        "$FFMPEG_SOURCE/configure" $FFMPEG_CONFIGURE
+        make -j$(nproc)
+        make -j$(nproc) $FFMPEG_TEST_PROGRAMS
+        du -sh "$FFMPEG_SOURCE" "$FFMPEG_BUILD"
+
+    - name: What was built
+      run: |
+        cd "$FFMPEG_BUILD"
+        ./ffmpeg -hide_banner -version
+        ls -l libavformat/libavformat.a libavcodec/libavcodec.a libswresample/libswresample.a \
+              libswscale/libswscale.a libavutil/libavutil.a $FFMPEG_TEST_PROGRAMS
+        {
+          echo "### FFmpeg"
+          echo
+          echo "\`$FFMPEG_REPO\` at \`$FFMPEG_COMMIT\`, configured with \`$FFMPEG_CONFIGURE\`"
+          echo "(cache ${{ steps.cache.outputs.cache-hit == 'true' && 'hit' || 'miss, built now' }})."
+        } >> "$GITHUB_STEP_SUMMARY"
+
+  # The tests of the FFmpeg tree that the README lists next to the player
+  # tests. They do not depend on the exteplayer3 branch, so they run once.
+  ffmpeg-tests:
+    name: FFmpeg companion tests
+    needs: ffmpeg
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config nasm libxml2-dev zlib1g-dev
+
+    - name: FFmpeg from the cache
+      uses: actions/cache/restore@v4
+      with:
+        path: /home/runner/ffmpeg-host
+        key: ${{ needs.ffmpeg.outputs.key }}
+        fail-on-cache-miss: true
+
+    - name: Run
+      run: |
+        set -u
+        cd "$FFMPEG_BUILD"
+        mkdir -p "$RUNNER_TEMP/fflogs"
+        failed=0
+        {
+          echo "### FFmpeg companion tests ($FFMPEG_REPO at ${FFMPEG_COMMIT:0:10})"
+          echo
+          echo "| test | result | time |"
+          echo "|---|---|---|"
+        } >> "$GITHUB_STEP_SUMMARY"
+        step() {
+          local id=$1 tmo=$2 start=$SECONDS state rc
+          shift 2
+          echo "::group::$id"
+          echo "+ $*"
+          timeout -k 10 "$tmo" "$@" 2>&1 | tee "$RUNNER_TEMP/fflogs/$id.log"
+          rc=${PIPESTATUS[0]}
+          echo "::endgroup::"
+          if [ "$rc" = 0 ]; then state=pass
+          elif [ "$rc" = 124 ] || [ "$rc" = 137 ]; then state="TIMEOUT after $tmo s"
+          else state="FAIL (exit $rc)"; fi
+          if [ "$rc" != 0 ]; then
+            failed=1
+            echo "::error::$id: $state"
+            tail -40 "$RUNNER_TEMP/fflogs/$id.log"
+          fi
+          echo "| $id | $state | $((SECONDS - start)) s |" >> "$GITHUB_STEP_SUMMARY"
+        }
+        for t in fate-hls-selection fate-mpegts-probe fate-dash-live; do
+          step $t 900 make $t
+        done
+        step dash_http.py 900 python3 "$FFMPEG_SOURCE/tests/dash_http.py" \
+          --ffmpeg "$FFMPEG_BUILD/ffmpeg" --driver "$FFMPEG_BUILD/libavformat/tests/dash_http"
+        step hls_http.py 900 python3 "$FFMPEG_SOURCE/tests/hls_http.py" \
+          --ffmpeg "$FFMPEG_BUILD/ffmpeg" --driver "$FFMPEG_BUILD/libavformat/tests/hls_http"
+        step hls_http.py-realtime 900 python3 "$FFMPEG_SOURCE/tests/hls_http.py" \
+          --ffmpeg "$FFMPEG_BUILD/ffmpeg" --driver "$FFMPEG_BUILD/libavformat/tests/hls_http" --realtime
+        exit $failed
+
+    - name: Logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: logs-ffmpeg-tests
+        path: ${{ runner.temp }}/fflogs
+        if-no-files-found: ignore
+
+  host:
+    name: ${{ matrix.ref }}
+    needs: ffmpeg
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ fromJSON(needs.ffmpeg.outputs.refs) }}
+    steps:
+    # this branch: the script that runs the tests
+    - uses: actions/checkout@v4
+
+    # the tree under test, with its own tests
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ matrix.ref }}
+        path: ut
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config libxml2-dev zlib1g-dev
+
+    - name: FFmpeg from the cache
+      uses: actions/cache/restore@v4
+      with:
+        path: /home/runner/ffmpeg-host
+        key: ${{ needs.ffmpeg.outputs.key }}
+        fail-on-cache-miss: true
+
+    - name: Host tests
+      env:
+        REF_NAME: ${{ matrix.ref }}
+      run: bash .github/host-tests/run-host-tests.sh ut "$RUNNER_TEMP/host-tests"
+
+    - name: Logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: logs-${{ strategy.job-index }}
+        path: ${{ runner.temp }}/host-tests/logs
+        if-no-files-found: ignore
