@@ -1278,6 +1278,8 @@ static void FFMPEGThread(Context_t *context)
     int32_t swr_in_format = -1;
     /* the resampler has got a timestamp to count on from */
     int32_t swr_has_pts = 0;
+    /* the PCM writer has to renew its header with the next frame it gets */
+    int32_t renew_pcm_header = 0;
     AVFrame *decoded_frame = NULL;
     int32_t out_sample_rate = 44100;
 #if HAVE_CH_LAYOUT
@@ -1797,6 +1799,7 @@ static void FFMPEGThread(Context_t *context)
                     if (restart_audio_resampling)
                     {
                         restart_audio_resampling = 0;
+                        renew_pcm_header = 1;
                         if (swr)
                         {
                             swr_free(&swr);
@@ -1896,8 +1899,7 @@ static void FFMPEGThread(Context_t *context)
                             ffmpeg_printf(10, "audio format changed, new resampler\n");
                             swr_free(&swr);
                             swr = NULL;
-                            /* the PCM writer has to renew its header */
-                            pcmExtradata.bResampling = 1;
+                            renew_pcm_header = 1;
                         }
                         if (!swr) 
                         {
@@ -2066,6 +2068,13 @@ static void FFMPEGThread(Context_t *context)
                         avOut.height     = 0;
                         avOut.type       = "audio";
 
+                        /* the packet that carried the request may have given
+                         * no frame: keep it until one goes to the writer */
+                        if (renew_pcm_header && !context->playback->BackWard)
+                        {
+                            renew_pcm_header = 0;
+                            pcmExtradata.bResampling = 1;
+                        }
                         if (!context->playback->BackWard && Write(context->output->audio->Write, context, &avOut, pts) < 0)
                         {
                             ffmpeg_err("writing data to audio device failed\n");
