@@ -1291,6 +1291,8 @@ static void FFMPEGThread(Context_t *context)
     int32_t out_channels = 2;
     uint32_t cAVIdx = 0;
     int64_t readErrorSince[IPTV_AV_CONTEXT_MAX_NUM] = {0, 0};
+    /* TS live mode: the read error that has been reported, 0 after a packet */
+    int liveReadError = 0;
 
     // for seek
     int64_t seek_target_seconds = 0;
@@ -1522,6 +1524,7 @@ static void FFMPEGThread(Context_t *context)
                 avContextTab[cAVIdx]->streams[packet.stream_index],
                 &lastRadioMessage[cAVIdx], context->playback->isVideo);
             readErrorSince[cAVIdx] = 0;
+            liveReadError = 0;
             int64_t pts = 0;
             int64_t dts = 0;
             Track_t *videoTrack = NULL;
@@ -2197,6 +2200,8 @@ static void FFMPEGThread(Context_t *context)
         }
         else 
         {
+            int repeatedReadError = 0;
+
             if (ffmpegStatus < 0 && ffmpegStatus != AVERROR_EOF &&
                 ffmpegStatus != AVERROR_EXIT && !PlaybackDieNow(0) &&
                 avContextTab[cAVIdx]->url &&
@@ -2225,7 +2230,14 @@ static void FFMPEGThread(Context_t *context)
             {
                 static char errbuf[256];
 
-                if( 0 == av_strerror(ffmpegStatus, errbuf, sizeof(errbuf)) )
+                /* a dead live source fails again every 100 ms */
+                if (context->playback->isTSLiveMode)
+                {
+                    repeatedReadError = ffmpegStatus == liveReadError;
+                    liveReadError = ffmpegStatus;
+                }
+
+                if( !repeatedReadError && 0 == av_strerror(ffmpegStatus, errbuf, sizeof(errbuf)) )
                 {
                     /* In this way we inform user about error within the core
                      */
@@ -2274,7 +2286,10 @@ static void FFMPEGThread(Context_t *context)
                 }
                 
                 // av_read_frame failed
-                ffmpeg_err("no data ->end of file reached ? \n");
+                if (!repeatedReadError)
+                {
+                    ffmpeg_err("no data ->end of file reached ? \n");
+                }
                 wrapped_packet_unref(&packet);
                 releaseMutex(__FILE__, __FUNCTION__,__LINE__);
                 if( bEndProcess )
