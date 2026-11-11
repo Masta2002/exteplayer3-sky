@@ -835,6 +835,12 @@ int LinuxDvbSwitch(Context_t  *context, char *type)
                     if (context->playback->isDash)
                         ret = cERR_LINUXDVB_ERROR;
                 }
+                /* AUDIO_PLAY starts the decoder: hold it again while the
+                 * playback is paused, the continue command releases it */
+                else if (context->playback->isPaused && ioctl(audiofd, AUDIO_PAUSE, NULL) == -1)
+                {
+                    linuxdvb_err("AUDIO_PAUSE: ERROR %d, %s\n", errno, strerror(errno));
+                }
 audio_switch_done:
                 free(Encoding);
             }
