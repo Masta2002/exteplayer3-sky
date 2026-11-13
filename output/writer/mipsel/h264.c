@@ -105,23 +105,25 @@ static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, 
     
     uint8_t numPps = 0;
 
-    if(nalsize != 4)
-    {
-        return -1;
-    }
-    
     // Find SPS and PPS NALUs in AVCC data
     uint8_t *d = pData;
-    while (d + 4 < pData + dataSize)
+    while (d + nalsize < pData + dataSize)
     {
-        uint32_t nalLen = ReadUint32(d);
-        if (nalLen > (uint32_t)(pData + dataSize - d - 4))
+        /* the NAL length has 1 to 4 bytes, as told by the avcC */
+        uint32_t nalLen = 0;
+        int32_t k;
+        for (k = 0; k < nalsize; k++)
+        {
+            nalLen = (nalLen << 8) | d[k];
+        }
+        if (nalLen > (uint32_t)(pData + dataSize - d - nalsize))
         {
             h264_err("NAL length %u beyond the packet\n", nalLen);
             return -1;
         }
         
-        uint8_t nalType = d[4] & 0x1f;
+        /* an empty NAL has no type, the byte belongs to the next length */
+        uint8_t nalType = nalLen ? d[nalsize] & 0x1f : 0;
         if (nalType == 7) 
         { /* SPS */
         
@@ -136,7 +138,7 @@ static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, 
             sps[spsIdx++] = (uint8_t)(0xFF & (nalLen >> 8));
             sps[spsIdx++] = (uint8_t)(0xFF & nalLen);
 
-            memcpy(&(sps[spsIdx]), d + 4, nalLen);
+            memcpy(&(sps[spsIdx]), d + nalsize, nalLen);
             spsIdx += nalLen;
             
             numSps += 1;
@@ -156,14 +158,14 @@ static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, 
             pps[ppsIdx++] = (uint8_t)(0xFF & (nalLen >> 8));
             pps[ppsIdx++] = (uint8_t)(0xFF & nalLen);
 
-            memcpy(&(pps[ppsIdx]), d + 4, nalLen);
+            memcpy(&(pps[ppsIdx]), d + nalsize, nalLen);
             ppsIdx += nalLen;
             
             numPps += 1;
             
             h264_printf(10, "PPS len[%u]...\n", nalLen);
         }
-        d += 4 + nalLen;
+        d += nalsize + nalLen;
     }
     /* profile and level are taken from the first SPS, the SPS count has 5 bits */
     if (numSps == 0 || numSps > 31 || spsIdx < 6)
@@ -183,7 +185,7 @@ static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, 
     aExtraData[idx++] = sps[3];         // profile
     aExtraData[idx++] = sps[4];         // profile compat
     aExtraData[idx++] = sps[5];         // level
-    aExtraData[idx++] = 0xff;           // nal size - 1
+    aExtraData[idx++] = 0xfc | (nalsize - 1); // nal size - 1
     
     aExtraData[idx++] = 0xe0 | numSps;
     if (numSps)
