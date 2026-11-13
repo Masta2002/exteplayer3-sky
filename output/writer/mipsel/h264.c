@@ -83,6 +83,10 @@ static int                     resetPending = 0;
 /* MISC Functions                */
 /* ***************************** */
 
+/* Room for all SPS and PPS of a stream as Annex B NAL units (start code +
+ * data each); PreparCodecData() converts the avcC into a buffer of this size. */
+#define AVCC_TMP_SIZE 2048
+
 // Please see: https://bugzilla.mozilla.org/show_bug.cgi?id=1105771
 static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, uint8_t *pData, uint32_t dataSize)
 {
@@ -95,15 +99,19 @@ static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, 
     
     int32_t nalsize = (aExtraData[4] & 3) + 1;
     
-    uint8_t sps[256];
-    uint8_t spsIdx = 0;
+    uint8_t sps[AVCC_TMP_SIZE];
+    uint32_t spsIdx = 0;
     
-    uint8_t numSps = 0;
+    uint32_t numSps = 0;
     
-    uint8_t pps[256];
-    uint8_t ppsIdx = 0;
+    uint8_t pps[AVCC_TMP_SIZE];
+    uint32_t ppsIdx = 0;
     
     uint8_t numPps = 0;
+
+    /* what the collected sets need in PreparCodecData(), where each one
+     * gets a 4 byte start code instead of the 2 byte length it has here */
+    uint32_t annexbLen = 0;
 
     // Find SPS and PPS NALUs in AVCC data
     uint8_t *d = pData;
@@ -127,12 +135,12 @@ static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, 
         if (nalType == 7) 
         { /* SPS */
         
-            /* checked before the size is stored: spsIdx is 8 bit wide */
-            if (spsIdx + 2 + nalLen >= sizeof(sps))
+            if (annexbLen + 4 + nalLen > AVCC_TMP_SIZE)
             {
                 h264_err("SPS no free space to copy...\n");
                 return -1;
             }
+            annexbLen += 4 + nalLen;
 
             // 16 bits size
             sps[spsIdx++] = (uint8_t)(0xFF & (nalLen >> 8));
@@ -148,11 +156,19 @@ static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, 
         else if (nalType == 8)
         { /* PPS */
 
-            if (ppsIdx + 2 + nalLen >= sizeof(pps))
+            /* the avcC count of the PPS has 8 bits */
+            if (numPps == 255)
+            {
+                h264_err("too many PPS...\n");
+                return -1;
+            }
+
+            if (annexbLen + 4 + nalLen > AVCC_TMP_SIZE)
             {
                 h264_err("PPS not free space to copy...\n");
                 return -1;
             }
+            annexbLen += 4 + nalLen;
 
             // 16 bits size
             pps[ppsIdx++] = (uint8_t)(0xFF & (nalLen >> 8));
@@ -205,8 +221,6 @@ static int32_t UpdateExtraData(uint8_t **ppExtraData, uint32_t *pExtraDataSize, 
     *pExtraDataSize = idx;
     return 0;
 }
-
-#define AVCC_TMP_SIZE 2048
 
 /* Limit the level of a SPS to 4.1, as done before for the first SPS. */
 static void LimitSpsLevel(unsigned char *sps, unsigned int len)
