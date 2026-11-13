@@ -9,6 +9,13 @@
 #
 # The tests are used as they are in the tree under test. Nothing here
 # changes them; a test that is not in the tree is reported as absent.
+#
+# Switches for looking at the timing mode of tests/hls_switch.py:
+#   TIMING_RUNS=n   run it n times through timing-probe.py, which prints the
+#                   deviation the test asserts on and keeps the player logs
+#   TIMING_BOUND=t  bound of that assertion in 90 kHz ticks for those runs
+#                   (the test has 9000); larger = measure a whole run
+#   TIMING_ONLY=1   build the timing player and run nothing but that mode
 
 set -u
 : "${FFMPEG_SOURCE:?}" "${FFMPEG_BUILD:?}"
@@ -26,6 +33,10 @@ VPES=$OUT/video.pes
 RESULTS=$W/results.tsv
 : > "$RESULTS"
 failed=0
+HERE=$(cd "$(dirname "$0")" && pwd)
+TIMING_RUNS=${TIMING_RUNS:-0}
+case "$TIMING_RUNS" in ''|*[!0-9]*) TIMING_RUNS=0;; esac
+full() { [ "${TIMING_ONLY:-0}" != 1 ]; }
 
 note() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$RESULTS"; }
 
@@ -63,7 +74,9 @@ skip() { # skip <id> <reason> <what it covers>
 have() { [ -f "$UT/$1" ]; }
 
 # ---- tests/run.sh: the small UBSan test programs ------------------------
-if have tests/run.sh; then
+if ! full; then
+  :
+elif have tests/run.sh; then
   # -x only to see in the log which program was compiled and started
   step run.sh 600 "tests/run.sh: all unit test programs" sh -x tests/run.sh
   log=$W/logs/run.sh.log
@@ -89,7 +102,12 @@ fi
 # ---- tests/build.sh: the host player, three ways ------------------------
 PCM="-DPCM_EXPORT_PATH=\"$FIFO\""
 host=no; capture=no; timing=no; asan=no
-if have tests/build.sh; then
+if ! full && have tests/build.sh; then
+  step build-timing 600 "host player capturing audio and video PES, HLS format alias" \
+    env "CFLAGS=$PCM" "HOST_AUDIO_OUTPUT=$APES" "HOST_VIDEO_OUTPUT=$VPES" HOST_HLS_ALIAS=1 \
+    sh tests/build.sh "$OUT/exteplayer3-timing"
+  [ "$rc" = 0 ] && timing=yes
+elif have tests/build.sh; then
   step build-host 600 "host player with an isolated PCM FIFO (+ HTTP seek helper)" \
     env "CFLAGS=$PCM" sh tests/build.sh "$OUT/exteplayer3-host"
   [ "$rc" = 0 ] && host=yes
@@ -111,7 +129,9 @@ fi
 
 # ---- tests/integration.py ----------------------------------------------
 what="HTTP TS seek, HLS quality, single-file DASH audio switch, subtitles, radio metadata, PCM FIFO, CLI validation"
-if ! have tests/integration.py; then
+if ! full; then
+  :
+elif ! have tests/integration.py; then
   skip integration "tests/integration.py is not in this tree" "$what"
 else
   if [ $host = yes ]; then
@@ -136,7 +156,9 @@ elif [ ! -f "$FFMPEG_SOURCE/tests/hls_http.py" ]; then
   skip hls_switch "tests/hls_http.py is not in the FFmpeg tree" "HLS audio switching"
 else
   what="HLS audio switching, decoded PCM through the FIFO (VOD + live, sync off/on)"
-  if [ $host = yes ]; then
+  if ! full; then
+    :
+  elif [ $host = yes ]; then
     step hls_switch-export 900 "$what" \
       python3 tests/hls_switch.py --player "$OUT/exteplayer3-host" --ffmpeg "$FF" --pcm-fifo "$FIFO"
   else
@@ -144,7 +166,9 @@ else
   fi
   what1="HLS audio switching, compressed AAC from the PES capture, three qualities, format alias"
   what2="HLS audio switching, software decoded PCM from the PES capture"
-  if [ $capture = yes ]; then
+  if ! full; then
+    :
+  elif [ $capture = yes ]; then
     step hls_switch-compressed 900 "$what1" \
       python3 tests/hls_switch.py --player "$OUT/exteplayer3-capture" --ffmpeg "$FF" --pcm-fifo "$FIFO" \
       --audio-output "$APES" --mode compressed --multiple --video-first --quality all
@@ -160,6 +184,15 @@ else
     skip hls_switch-timing "the timing player did not build" "$what"
   elif [ ! -x "$DRIVER" ]; then
     skip hls_switch-timing "libavformat/tests/hls_http is not in the FFmpeg build" "$what"
+  elif [ "$TIMING_RUNS" -gt 0 ]; then
+    for i in $(seq 1 "$TIMING_RUNS"); do
+      step "hls_switch-timing-$i" 900 "$what (probe, bound ${TIMING_BOUND:-9000})" \
+        python3 "$HERE/timing-probe.py" "$UT" "$W/logs" "timing-$i" -- \
+        --player "$OUT/exteplayer3-timing" --ffmpeg "$FF" --pcm-fifo "$FIFO" \
+        --audio-output "$APES" --video-output "$VPES" --timing-driver "$DRIVER" \
+        --mode compressed --case live --multiple --video-first --quality all --sync default --backpressure
+    done
+    probes=$(grep -h '^probe-summary' "$W"/logs/hls_switch-timing-*.log 2>/dev/null)
   else
     step hls_switch-timing 900 "$what" \
       python3 tests/hls_switch.py --player "$OUT/exteplayer3-timing" --ffmpeg "$FF" --pcm-fifo "$FIFO" \
@@ -181,6 +214,15 @@ fi
     echo "| $id | $state | $time | $what |"
   done < "$RESULTS"
   echo
+  if [ -n "${probes:-}" ]; then
+    echo "Timing mode, PTS written by the player against the source media (90 kHz ticks):"
+    echo
+    echo '```'
+    echo "$probes"
+    grep -H '^probe t=' "$W"/logs/hls_switch-timing-*.log | sed 's|^.*/hls_switch-||; s|\.log:probe| |' | grep ' audio' | cut -c1-170 | head -200
+    echo '```'
+    echo
+  fi
   if [ $failed = 0 ]; then
     echo "All commands that ran passed."
   else
