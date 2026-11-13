@@ -695,6 +695,7 @@ static int ParseParams(int argc,char* argv[], PlayFiles_t *playbackFiles, int *p
             break;
         case 'G':
             g_graphic_sub_path = optarg;
+            break;
         case 'W':
         {
             int val = atoi(optarg);
