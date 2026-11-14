@@ -95,6 +95,55 @@ static int audio_command(void *ctx, ManagerCmd_t command, void *argument)
     return 0;
 }
 
+/* Output follow-up: results of a switch, pause over a switch, reset per type. */
+
+/* Command() refers to the whole buffering interface. */
+int32_t LinuxDvbBuffOpen(Context_t *context, char *type, int outfd, void *mtx)
+{
+    (void)context;
+    (void)type;
+    (void)outfd;
+    (void)mtx;
+    return 0;
+}
+
+int32_t LinuxDvbBuffClose(Context_t *context) { (void)context; return 0; }
+int32_t LinuxDvbBuffFlush(Context_t *context) { (void)context; return 0; }
+int32_t LinuxDvbBuffResume(Context_t *context) { (void)context; return 0; }
+int32_t LinuxDvbBuffSetSize(const uint32_t size) { (void)size; return 0; }
+uint32_t LinuxDvbBuffGetSize(void) { return 0; }
+
+static void switch_results_and_reset(Context_t *context, PlaybackHandler_t *playback,
+                                     ManagerHandler_t *managers)
+{
+    playback->isDash = 0;
+    failing_request = AUDIO_SET_BYPASS_MODE;
+    request_count = 0;
+    /* Only logged outside DASH: the track is switched, so the switch has not failed. */
+    assert(!LinuxDvbSwitch(context, "audio"));
+    assert(request_count == 5 && requests[2] == AUDIO_SET_BYPASS_MODE);
+    assert(requests[3] == AUDIO_SET_BYPASS_MODE && requests[4] == AUDIO_PLAY);
+    failing_request = 0;
+    playback->isPaused = 1;
+    request_count = 0;
+    assert(!LinuxDvbSwitch(context, "audio"));
+    assert(request_count == 5 && requests[3] == AUDIO_PLAY && requests[4] == AUDIO_PAUSE);
+    playback->isPaused = 0;
+    /* The writer stub stands for the video writer as well. */
+    managers->video = managers->audio;
+    failing_request = VIDEO_SET_STREAMTYPE;
+    request_count = 0;
+    assert(!LinuxDvbSwitch(context, "video"));
+    assert(request_count == 5 && requests[0] == VIDEO_STOP && requests[1] == VIDEO_CLEAR_BUFFER);
+    assert(requests[3] == VIDEO_SET_STREAMTYPE && requests[4] == VIDEO_PLAY);
+    failing_request = 0;
+    resets = 0;
+    assert(!Command(context, OUTPUT_FLUSH, "audio") && resets == 1);
+    assert(!Command(context, OUTPUT_FLUSH, "video") && resets == 2);
+    managers->video = NULL;
+    playback->isDash = 1;
+}
+
 int main(void)
 {
     Context_t context = {0};
@@ -179,6 +228,7 @@ int main(void)
     request_count = 0;
     LinuxDvbTiming("test-unavailable");
     assert(request_count == 2 && requests[0] == VIDEO_GET_PTS && requests[1] == AUDIO_GET_PTS);
+    switch_results_and_reset(&context, &playback, &managers);
     pthread_mutex_destroy(&LinuxDVBmutex);
     return 0;
 }
