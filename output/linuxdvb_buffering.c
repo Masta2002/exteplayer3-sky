@@ -228,16 +228,17 @@ static void LinuxDvbBuffThread(Context_t *context)
     g_bWritingAudio = false;
     g_bSignalWriteFinish = false;
     pthread_cond_broadcast(&bufferingWriteFinishedCond);
-    pthread_cond_signal(&bufferingExitCond);
-    pthread_mutex_unlock(&bufferingMtx);
-    
-    buff_printf(20, "EXIT\n");
-    hasBufferingThreadStarted = false;
-    
+    /* the close looks at the flag as soon as it is woken, and the thread
+     * of the next open makes a pipe of its own: both before the signal */
     close(g_pfd[0]);
     close(g_pfd[1]);
     g_pfd[0] = -1;
     g_pfd[1] = -1;
+    hasBufferingThreadStarted = false;
+    pthread_cond_signal(&bufferingExitCond);
+    pthread_mutex_unlock(&bufferingMtx);
+    
+    buff_printf(20, "EXIT\n");
 }
 
 int32_t LinuxDvbBuffSetSize(const uint32_t bufferSize)
@@ -338,7 +339,9 @@ int32_t LinuxDvbBuffClose(Context_t *context)
 #else
         max_wait.tv_sec = time(NULL) + 2;
 #endif
-        pthread_cond_timedwait(&bufferingExitCond, &bufferingMtx, &max_wait);
+        /* the thread clears the flag under the lock before it signals */
+        while (hasBufferingThreadStarted &&
+               0 == pthread_cond_timedwait(&bufferingExitCond, &bufferingMtx, &max_wait));
         pthread_mutex_unlock(&bufferingMtx);
 
         if (!hasBufferingThreadStarted)
