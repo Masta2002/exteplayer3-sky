@@ -1216,7 +1216,6 @@ static void audio_live_frame(int32_t track_id, int channels)
         ffmpeg_printf(10, "audio track %d: %d channels decoded (before: %d)\n", (int)track_id, channels, old);
 }
 
-static char* Codec2Encoding(int32_t codec_id, int32_t media_type, uint8_t *extradata, int extradata_size, int profile, int32_t *version)
 /* The video part of Codec2Encoding(): NULL for a codec without an encoding.
  * On its own, so that the variant selection can ask without the audio part. */
 static char* VideoCodec2Encoding(int32_t codec_id, int32_t *version)
