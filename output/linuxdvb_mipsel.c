@@ -676,10 +676,11 @@ int LinuxDvbClear(Context_t  *context __attribute__((unused)), char *type)
                         linuxdvb_err("AUDIO_SET_BYPASS_MODE: %s\n", strerror(errno));
                         ret = cERR_LINUXDVB_ERROR;
                     }
+                    /* The buffer is cleared at this point. Restarting a decoder
+                     * that still runs is not an error of the clear. */
                     if (ioctl(audiofd, AUDIO_PLAY) < 0)
                     {
                         linuxdvb_err("AUDIO_PLAY: %s\n", strerror(errno));
-                        ret = cERR_LINUXDVB_ERROR;
                     }
                 }
                 free(encoding);
@@ -687,7 +688,6 @@ int LinuxDvbClear(Context_t  *context __attribute__((unused)), char *type)
             if (ioctl(audiofd, AUDIO_CONTINUE) < 0)
             {
                 linuxdvb_err("AUDIO_CONTINUE: %s\n", strerror(errno));
-                ret = cERR_LINUXDVB_ERROR;
             }
         }
 
@@ -874,6 +874,9 @@ audio_switch_done:
                 else
                 {
                     linuxdvb_printf(10, "found writer %s for encoding %s\n", writer->caps->name, Encoding);
+                    /* the restarted decoder needs the codec data again */
+                    if (writer->reset)
+                        writer->reset();
                     ret = ioctl( videofd, VIDEO_SET_STREAMTYPE, LinuxDvbMapStreamType(writer->caps->dvbStreamType, true));
                     if (ret < 0) ret = ioctl( videofd, VIDEO_SET_STREAMTYPE, LinuxDvbMapStreamType(writer->caps->dvbStreamType, false));
                     if (ret < 0)
