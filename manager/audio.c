@@ -277,7 +277,11 @@ static int Command(void  *_context, ManagerCmd_t command, void * argument)
     {
         if ((TrackCount > 0) && (CurrentTrack >=0))
         {
-            *((char**)argument) = (char *)strdup(Tracks[CurrentTrack].Encoding);
+            /* a transcoded track is written as the codec it is encoded to */
+            *((char**)argument) = (char *)strdup(Tracks[CurrentTrack].transcode == 1 ? "A_AC3" :
+                                                 Tracks[CurrentTrack].transcode == 2 ? "A_AAC" :
+                                                 Tracks[CurrentTrack].transcode == 4 ? "A_EAC3" :
+                                                 Tracks[CurrentTrack].Encoding);
         }
         else
         {
