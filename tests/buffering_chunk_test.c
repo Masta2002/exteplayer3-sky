@@ -1,7 +1,13 @@
 #include <assert.h>
 #include <signal.h>
 #include <sys/select.h>
+#include <semaphore.h>
+#include <stdarg.h>
+#include <stdio.h>
+#define printf test_printf
+int test_printf(const char *format, ...);
 #include "../output/linuxdvb_buffering.c"
+#undef printf
 
 static int8_t stop_requested(void);
 
@@ -40,9 +46,12 @@ static int8_t stop_requested(void)
     return stopped;
 }
 
+static void thread_has_started(void);
+
 bool PlaybackDieNowRegisterCallback(PlaybackDieNowCallback callback)
 {
     (void)callback;
+    thread_has_started();
     return true;
 }
 
@@ -132,7 +141,7 @@ static void thread_end(void)
 
     /* A close without a stop before it, as after a failed OUTPUT_PLAY. */
     assert(!LinuxDvbBuffOpen(&context, "video", decoder[1], NULL));
-    LinuxDvbBuffClose(&context);
+    assert(!LinuxDvbBuffClose(&context));
     wait_for(thread_ended, "LinuxDvbBuffClose has not ended the buffering thread\n");
 
     /* A flush that waits for the write while the playback is terminated. */
@@ -153,6 +162,107 @@ static void thread_end(void)
     assert(!bufferingQueueHead && !bufferingDataSize);
     stopped = 0;
     assert(!LinuxDvbBuffClose(&context));
+    close(decoder[0]);
+    close(decoder[1]);
+}
+
+/* Output follow-up: the end of the thread as the close and the next open see it. */
+
+static sem_t held, resume;
+static int hold_exit, hold_created, thread_runs;
+
+/* Called by the thread once it has made its wake-up pipe. */
+static void thread_has_started(void)
+{
+    thread_runs = 1;
+}
+
+static bool thread_gone(void)
+{
+    return thread_runs && g_pfd[1] == -1;
+}
+
+/* The messages of linuxdvb_buffering.c: its thread prints "EXIT" as the last
+ * thing it does, the open prints "Created thread" after pthread_create(). */
+int test_printf(const char *format, ...)
+{
+    va_list arguments;
+    int result;
+    if (hold_exit && strstr(format, "] EXIT\n"))
+    {
+        hold_exit = 0;
+        sem_post(&held);
+        sem_wait(&resume);
+    }
+    if (hold_created && strstr(format, "Created thread"))
+    {
+        hold_created = 0;
+        wait_for(thread_gone, "the buffering thread has not ended with the playback\n");
+    }
+    va_start(arguments, format);
+    result = vprintf(format, arguments);
+    va_end(arguments);
+    return result;
+}
+
+static void chunk_arrives(Context_t *context, int decoder[2], uint8_t value)
+{
+    uint8_t frame[256] = {value}, arrived[256];
+    struct iovec vector = {frame, sizeof(frame)};
+    assert(BufferingWriteV(decoder[1], &vector, 1) == sizeof(frame));
+    hang = "the buffering thread does not write the chunk\n";
+    alarm(5);
+    assert(read(decoder[0], arrived, sizeof(arrived)) == sizeof(arrived));
+    alarm(0);
+    assert(!memcmp(arrived, frame, sizeof(frame)));
+    assert(!LinuxDvbBuffClose(context));
+}
+
+/* The thread is still at its last message when the close returns and the
+ * output is opened again: the close has seen its end, the open starts a
+ * thread, and that thread keeps its wake-up pipe. */
+static void open_while_the_thread_ends(Context_t *context, int decoder[2])
+{
+    hold_exit = 1;
+    assert(!LinuxDvbBuffOpen(context, "video", decoder[1], NULL));
+    assert(!LinuxDvbBuffClose(context));
+    assert(!LinuxDvbBuffOpen(context, "video", decoder[1], NULL));
+    hang = "the buffering thread has not come to its end\n";
+    alarm(5);
+    assert(!sem_wait(&held));
+    alarm(0);
+    sem_post(&resume);
+    chunk_arrives(context, decoder, 4);
+}
+
+/* The playback is being stopped: the thread has ended before the open goes
+ * on behind pthread_create(). No thread is left to close, and the next open
+ * starts one. */
+static void open_while_the_playback_stops(Context_t *context, int decoder[2])
+{
+    stopped = 1;
+    thread_runs = 0;
+    hold_created = 1;
+    assert(!LinuxDvbBuffOpen(context, "video", decoder[1], NULL));
+    assert(!hold_created);
+    stopped = 0;
+    assert(!LinuxDvbBuffClose(context));
+    assert(!LinuxDvbBuffOpen(context, "video", decoder[1], NULL));
+    chunk_arrives(context, decoder, 5);
+}
+
+static void close_and_open(void)
+{
+    PlaybackHandler_t playback = {0};
+    Context_t context = {.playback = &playback};
+    int decoder[2];
+
+    assert(!pipe(decoder) && !sem_init(&held, 0, 0) && !sem_init(&resume, 0, 0));
+    signal(SIGALRM, hung);
+    BUFF_DEBUG_LEVEL = 20;
+    open_while_the_thread_ends(&context, decoder);
+    open_while_the_playback_stops(&context, decoder);
+    BUFF_DEBUG_LEVEL = 0;
     close(decoder[0]);
     close(decoder[1]);
 }
@@ -183,5 +293,6 @@ int main(void)
     pthread_cond_destroy(&bufferingDataConsumedCond);
     pthread_cond_destroy(&bufferingdDataAddedCond);
     thread_end();
+    close_and_open();
     return 0;
 }

@@ -12,7 +12,10 @@
 #define usleep test_usleep
 #define ioctl test_ioctl
 int test_ioctl(int fd, unsigned long request, ...);
+#define printf test_printf
+int test_printf(const char *format, ...);
 #include "../output/linuxdvb_mipsel.c"
+#undef printf
 #undef open
 #undef usleep
 #undef ioctl
@@ -144,6 +147,49 @@ static void switch_results_and_reset(Context_t *context, PlaybackHandler_t *play
     playback->isDash = 1;
 }
 
+/* Output follow-up: messages of the position query, a writer without reset(). */
+
+static const char *counted;
+static int messages;
+
+/* The messages of linuxdvb_mipsel.c. */
+int test_printf(const char *format, ...)
+{
+    va_list arguments;
+    int result;
+    if (counted && strstr(format, counted))
+        messages++;
+    va_start(arguments, format);
+    result = vprintf(format, arguments);
+    va_end(arguments);
+    return result;
+}
+
+/* Audio only: the video device is not asked, so no error is reported for it. */
+static void no_message_for_the_closed_video_device(Context_t *context)
+{
+    unsigned long long position = 1;
+    int video = videofd;
+    videofd = -1;
+    LINUXDVB_SILENT = 0;
+    counted = "VIDEO_GET_PTS";
+    request_count = 0;
+    assert(LinuxDvbPts(context, &position) < 0 && !position);
+    assert(request_count == 1 && requests[0] == AUDIO_GET_PTS && !messages);
+    counted = NULL;
+    LINUXDVB_SILENT = 1;
+    videofd = video;
+}
+
+static void writer_without_reset(Context_t *context, ManagerHandler_t *managers)
+{
+    managers->video = managers->audio;
+    pcm_writer.reset = NULL;
+    assert(!Command(context, OUTPUT_FLUSH, "audio"));
+    pcm_writer.reset = reset_pcm;
+    managers->video = NULL;
+}
+
 int main(void)
 {
     Context_t context = {0};
@@ -229,6 +275,8 @@ int main(void)
     LinuxDvbTiming("test-unavailable");
     assert(request_count == 2 && requests[0] == VIDEO_GET_PTS && requests[1] == AUDIO_GET_PTS);
     switch_results_and_reset(&context, &playback, &managers);
+    no_message_for_the_closed_video_device(&context);
+    writer_without_reset(&context, &managers);
     pthread_mutex_destroy(&LinuxDVBmutex);
     return 0;
 }
