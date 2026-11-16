@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build environment of the bundle, made on the runner: a Debian 8 "jessie"
-# armhf userland that runs under qemu-user (GCC 4.9.2, glibc 2.19,
+# armhf or mipsel userland that runs under qemu-user (GCC 4.9.2, glibc 2.19,
 # binutils 2.25, kernel headers 3.16), the toolchain generation of OpenPLi 4
 # (GCC 4.9.1, glibc 2.20). Everything built in it needs glibc <= 2.19.
 #
@@ -10,18 +10,21 @@
 # Not installed on purpose: libssl-dev, libxml2-dev, librtmp-dev,
 # libbluray-dev (the versions of /opt/deps must be the only ones).
 #
-# usage: rootfs.sh <directory> <archive.tar.zst>
+# usage: rootfs.sh <directory> <archive.tar.zst>   (environment: ARCH, armhf
+#        or mipsel, armhf by default)
 set -eux
 R=$1
 TARBALL=$2
 HERE=$(cd "$(dirname "$0")" && pwd)
+export ARCH=${ARCH:-armhf}
+. "$HERE/versions.sh"
 
 sudo apt-get update -q
 sudo apt-get install -y -q qemu-user-static debootstrap zstd
-bash "$HERE/binfmt.sh" arm
+bash "$HERE/binfmt.sh" $QEMU
 
-sudo debootstrap --arch=armhf --variant=minbase --no-check-gpg jessie "$R" http://archive.debian.org/debian
-bash "$HERE/binfmt.sh" arm "$R"
+sudo debootstrap --arch=$ARCH --variant=minbase --no-check-gpg jessie "$R" http://archive.debian.org/debian
+bash "$HERE/binfmt.sh" $QEMU "$R"
 
 echo 'deb http://archive.debian.org/debian jessie main' | sudo tee "$R/etc/apt/sources.list"
 sudo tee "$R/etc/apt/apt.conf.d/99old" <<'EOF'
@@ -49,7 +52,6 @@ fetch() {
     echo "$2  $f" | sha256sum -c
     sudo tar -xf "$f" -C "$R/build"
 }
-. "$HERE/versions.sh"
 fetch "$OPENSSL_URL" "$OPENSSL_SHA256"
 fetch "$LIBXML2_URL" "$LIBXML2_SHA256"
 fetch "$UDFREAD_URL" "$UDFREAD_SHA256"
@@ -62,7 +64,7 @@ sudo cp -r $SRCS/rtmpdump "$R/build/rtmpdump"
 sudo rm -rf "$R/build/rtmpdump/.git"
 
 sudo cp "$HERE/versions.sh" "$HERE/deps.sh" "$R/build/"
-sudo chroot "$R" /bin/bash /build/deps.sh
+sudo chroot "$R" /usr/bin/env ARCH=$ARCH /bin/bash /build/deps.sh
 sudo rm -rf "$R/build"
 
 sudo tee "$R/versions.sh" <<'EOF'

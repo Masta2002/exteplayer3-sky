@@ -2,7 +2,7 @@
 # Runs on the runner after player.sh: manifest (with the GLIBC check),
 # tarball and ipk of the bundle.
 # usage: package.sh <out/player> <name> <dist directory>
-# environment: MAX_GLIBC, DEPS_RPATH, PLAYER_DIR, PLAYER_REPO, PLAYER_SHA,
+# environment: ARCH, MAX_GLIBC, DEPS_RPATH, PLAYER_DIR, PLAYER_REPO, PLAYER_SHA,
 #              FFMPEG_REPO, FFMPEG_SHA, FFMPEG_RELEASE
 set -eux
 P=$1
@@ -10,6 +10,8 @@ NAME=$2
 mkdir -p "$3"
 DIST=$(cd "$3" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)
+export ARCH=${ARCH:-armhf}
+. "$HERE/versions.sh"
 BD=$P/bundle
 
 rc=0
@@ -27,7 +29,7 @@ GLIBC=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['glibc_m
     echo "ffmpeg:      $FFMPEG_REPO $FFMPEG_SHA ($FFMPEG_RELEASE)"
     echo "rpath:       exteplayer3 $DEPS_RPATH"
     echo "glibc:       highest GLIBC_ version required: $GLIBC (limit $MAX_GLIBC)"
-    echo "built:       Debian 8 armhf userland under qemu-user, GCC 4.9.2, glibc 2.19, $(date -u +%Y-%m-%d)"
+    echo "built:       Debian 8 $ARCH userland under qemu-user, GCC 4.9.2, glibc 2.19, $(date -u +%Y-%m-%d)"
     echo "libraries:"
     sed 's/^/  /' "$BD/lib/exteplayer3_deps.versions" 2> /dev/null
     echo "smoke tests (qemu-user):"
@@ -35,7 +37,7 @@ GLIBC=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['glibc_m
 } > "$BD/BUILDINFO"
 cat "$BD/BUILDINFO"
 
-T=exteplayer3-ff9-armv7ahf-$NAME
+T=exteplayer3-ff9-$LABEL-$NAME
 tar --owner=0 --group=0 -C "$BD" -czf "$DIST/$T.tar.gz" .
 
 # ipk as the one of skyjet18: /usr/bin/exteplayer3, /usr/lib/exteplayer3_deps
@@ -67,7 +69,7 @@ cp "$BD/BUILDINFO" "$DIST/$T.BUILDINFO"
 ls -la "$DIST"
 
 {
-    echo "### $NAME"
+    echo "### $LABEL $NAME"
     echo '```'
     cat "$BD/BUILDINFO"
     echo

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Matrix of the player builds as JSON for GITHUB_OUTPUT.
 
-usage: matrix.py <players.txt> [list]
+usage: matrix.py <players.txt> [list] [arches] [arches]
   list: "name repo ref" entries separated by newlines or ';'; when
   empty, the file is used. Lines starting with # are comments.
+  arches: Debian architectures (armhf mipsel), empty: both. With the word
+  "arches" as fourth argument: the matrix of the architectures alone.
 """
 import json
 import re
@@ -28,4 +30,12 @@ for entry in entries:
     out.append(dict(name=name, repo=repo, ref=ref))
 if not out:
     sys.exit('no player given')
-print(json.dumps(dict(include=out)))
+LABELS = {'armhf': 'armv7ahf', 'mipsel': 'mips32el'}
+arches = (sys.argv[3] if len(sys.argv) > 3 else '').replace(',', ' ').split() or ['armhf', 'mipsel']
+for a in arches:
+    if a not in LABELS:
+        sys.exit('unknown architecture %r' % a)
+if len(sys.argv) > 4 and sys.argv[4] == 'arches':
+    print(json.dumps(dict(include=[dict(arch=a, label=LABELS[a]) for a in arches])))
+else:
+    print(json.dumps(dict(include=[dict(p, arch=a, label=LABELS[a]) for a in arches for p in out])))

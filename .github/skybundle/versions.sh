@@ -18,6 +18,26 @@ BLURAY_SHA256=478ffd68a0f5dde8ef6ca989b7f035b5a0a22c599142e5cd3ff7b03bbebe5f2b
 # librtmp of rtmpdump 2.6 (OpenSSL 3 support), no release tarballs
 RTMPDUMP_GIT=https://git.ffmpeg.org/rtmpdump.git
 RTMPDUMP_COMMIT=138fdb258d9fc26f1843fd1b891180416c9dc575
-# code generation of the package: ARMv7-A, ARM (not Thumb) mode, VFPv2,
-# hard-float (read from the .ARM.attributes of its libraries)
-ARCHFLAGS="-march=armv7-a -mfloat-abi=hard -marm -mfpu=vfp"
+# target (ARCH: Debian architecture, armhf by default)
+case ${ARCH:-armhf} in
+    armhf)
+        # code generation of the package: ARMv7-A, ARM (not Thumb) mode,
+        # VFPv2, hard-float (read from the .ARM.attributes of its libraries)
+        ARCHFLAGS="-march=armv7-a -mfloat-abi=hard -marm -mfpu=vfp"
+        QEMU=arm
+        TRIPLET=arm-linux-gnueabihf
+        OPENSSL_TARGET=linux-armv4
+        HASHSTYLE="-Wl,--hash-style=gnu"
+        LABEL=armv7ahf
+        ;;
+    mipsel)
+        # the MIPS package: MIPS32 (release 1), o32, hard-float
+        ARCHFLAGS="-mel -mabi=32 -mhard-float -march=mips32"
+        QEMU=mipsel
+        TRIPLET=mipsel-linux-gnu
+        OPENSSL_TARGET=linux-mips32
+        # MIPS has no GNU hash style (not in the line of the package either)
+        HASHSTYLE=""
+        LABEL=mips32el
+        ;;
+esac

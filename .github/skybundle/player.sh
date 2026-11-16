@@ -18,9 +18,16 @@ OUT=/w/out/player
 BD=$OUT/bundle
 L=$BD/lib/exteplayer3_deps
 # NEEDED libraries the image has to provide (the package of skyjet18 takes
-# the same ones from the image); everything else is bundled
-IMAGE_LIBS="ld-linux-armhf.so.3 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libgcc_s.so.1
-            libz.so.1 liblzma.so.5 libasound.so.2 libfreetype.so.6"
+# the same ones from the image); everything else is bundled. The MIPS
+# package bundles liblzma itself, so does this one.
+case ${ARCH:-armhf} in
+    armhf)
+        IMAGE_LIBS="ld-linux-armhf.so.3 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libgcc_s.so.1
+                    libz.so.1 liblzma.so.5 libasound.so.2 libfreetype.so.6" ;;
+    mipsel)
+        IMAGE_LIBS="ld.so.1 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libgcc_s.so.1
+                    libz.so.1 libasound.so.2 libfreetype.so.6" ;;
+esac
 rm -rf $OUT
 mkdir -p $OUT $BD/bin $L
 SMOKE=$OUT/smoke.txt
@@ -45,7 +52,7 @@ SOURCES=$(echo main/*.c tools/*.c container/container.c container/container_ffmp
     output/writer/common/*.c external/ffmpeg/src/*.c external/flv2mpeg4/src/*.c external/plugins/src/*.c \
     output/linuxdvb_mipsel.c output/writer/mipsel/*.c)
 echo "$SOURCES" | tr ' ' '\n' > $OUT/sources.txt
-gcc $ARCHFLAGS -Os -pipe -O2 -Wl,-O1 -Wl,--hash-style=gnu -Wl,--as-needed -Wl,--disable-new-dtags \
+gcc $ARCHFLAGS -Os -pipe -O2 -Wl,-O1 $HASHSTYLE -Wl,--as-needed -Wl,--disable-new-dtags \
     -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -D_LARGEFILE_SOURCE -DHAVE_FLV2MPEG4_CONVERTER \
     "-DAUDIO_GET_PTS=_IOR('o', 19, __u64)" \
     -Iinclude -Iexternal -Iexternal/flv2mpeg4 -I$FF/usr/include \
@@ -76,7 +83,7 @@ needed() {
 }
 find_lib() {
     local d
-    for d in /opt/deps/lib /lib/arm-linux-gnueabihf /usr/lib/arm-linux-gnueabihf /lib /usr/lib; do
+    for d in /opt/deps/lib /lib/$TRIPLET /usr/lib/$TRIPLET /lib /usr/lib; do
         [ -e "$d/$1" ] && { readlink -f "$d/$1"; return 0; }
     done
     return 1

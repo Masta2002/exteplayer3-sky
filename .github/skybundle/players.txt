@@ -1,4 +1,4 @@
-# exteplayer3 trees built by a push of this branch: name repository ref
+# exteplayer3 trees built by a push of this branch: name repo ref
 # (ref: commit, branch or tag); a manual run takes the list as input
-all-1116      Masta2002/exteplayer3-sky  159971ef638ecb3d990bb8f0f69e7b7045dcb369
-skyjet-master skyjet18/exteplayer3       f6f25eef54bf65a44203fe5e42fbb88891a93f7a
+all-1117      Masta2002/exteplayer3-sky  793be79130a90ae93d84b19d373202eb41d6742d
+skyjet-master skyjet18/exteplayer3       6edd7b20a65a13847f00182a0647e7fe7d90b3ec

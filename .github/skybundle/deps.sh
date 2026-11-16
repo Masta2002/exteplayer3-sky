@@ -6,7 +6,7 @@ set -eux
 P=/opt/deps
 J=$(nproc)
 export CFLAGS="$ARCHFLAGS -O2 -pipe"
-export LDFLAGS="-L$P/lib -Wl,-rpath-link,$P/lib -Wl,-O1 -Wl,--hash-style=gnu -Wl,--as-needed"
+export LDFLAGS="-L$P/lib -Wl,-rpath-link,$P/lib -Wl,-O1 $HASHSTYLE -Wl,--as-needed"
 export PKG_CONFIG_PATH=$P/lib/pkgconfig
 mkdir -p $P
 : > $P/VERSIONS
@@ -25,7 +25,7 @@ log() {
 # image (FFmpeg 9 verifies server certificates by default)
 cd /build/openssl-$OPENSSL_VERSION
 ossl() {
-    env -u CFLAGS -u LDFLAGS ./Configure linux-armv4 shared no-tests no-docs "$@" --prefix=$P \
+    env -u CFLAGS -u LDFLAGS ./Configure $OPENSSL_TARGET shared no-tests no-docs "$@" --prefix=$P \
         --openssldir=/etc/ssl --libdir=lib $ARCHFLAGS -O2 -std=gnu99 || return 1
     log openssl-make make -j$J build_sw && log openssl-install make install_sw
 }
