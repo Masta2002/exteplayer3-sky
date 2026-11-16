@@ -1,0 +1,253 @@
+name: exteplayer3 + FFmpeg 9 bundle (armv7 hard-float, old glibc)
+
+# exteplayer3 with FFmpeg 9 and its libraries in one directory, made the way
+# the prebuilt ipk of skyjet18/exteplayer3 is made (OpenPLi 4 toolchain,
+# /usr/lib/exteplayer3_deps, the same FFmpeg configure line), for images with
+# an old glibc. Environment: Debian 8 armhf under qemu-user (GCC 4.9.2,
+# glibc 2.19), see .github/skybundle/. Every shipped ELF file must require
+# GLIBC <= MAX_GLIBC, the smoke tests run the bundle under qemu-user.
+#
+# push: the players of .github/skybundle/players.txt, player RPATH
+#       $ORIGIN/../lib/exteplayer3_deps (runs from any directory, e.g.
+#       /media/hdd/ep3vti/<name>/bin, and from /usr/bin with the ipk)
+# manual run: players, FFmpeg and RPATH as inputs
+
+on:
+  push:
+    branches:
+      - ci/skyjet-style-bundle
+    paths:
+      - '.github/skybundle/**'
+      - '.github/workflows/skyjet-style-bundle.yml'
+  workflow_dispatch:
+    inputs:
+      players:
+        description: 'exteplayer3 trees "name repo ref", separated by ";" (empty: .github/skybundle/players.txt)'
+        required: false
+        default: ''
+      ffmpeg_repo:
+        description: FFmpeg repository
+        required: false
+        default: Masta2002/FFmpeg
+      ffmpeg_ref:
+        description: FFmpeg commit, branch or tag
+        required: false
+        default: edb5542423bda688cc73e3f41a0173790802d0ea
+      deps_rpath:
+        description: 'RPATH of exteplayer3: /usr/lib/exteplayer3_deps (as the ipk of skyjet18) or $ORIGIN/../lib/exteplayer3_deps'
+        required: false
+        default: /usr/lib/exteplayer3_deps
+
+env:
+  MAX_GLIBC: '2.19'
+  # Masta2002/FFmpeg release/9.0-patched
+  FFMPEG_REPO: ${{ inputs.ffmpeg_repo || 'Masta2002/FFmpeg' }}
+  FFMPEG_REF: ${{ inputs.ffmpeg_ref || 'edb5542423bda688cc73e3f41a0173790802d0ea' }}
+  DEPS_RPATH: ${{ inputs.deps_rpath || '$ORIGIN/../lib/exteplayer3_deps' }}
+  R: /opt/oldroot
+
+jobs:
+  env:
+    name: environment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      key: ${{ steps.key.outputs.key }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Players
+      id: matrix
+      env:
+        PLAYERS: ${{ inputs.players }}
+      run: |
+        m=$(python3 .github/skybundle/matrix.py .github/skybundle/players.txt "$PLAYERS")
+        echo "$m"
+        echo "matrix=$m" >> "$GITHUB_OUTPUT"
+    - name: Key
+      id: key
+      run: echo "key=jessie-armhf-${{ hashFiles('.github/skybundle/rootfs.sh', '.github/skybundle/deps.sh', '.github/skybundle/versions.sh', '.github/skybundle/binfmt.sh') }}" >> "$GITHUB_OUTPUT"
+    - name: Cache
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: rootfs.tar.zst
+        key: ${{ steps.key.outputs.key }}
+    - name: Userland and libraries
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: bash .github/skybundle/rootfs.sh $R "$PWD/rootfs.tar.zst"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: rootfs
+        path: rootfs.tar.zst
+        compression-level: 0
+        retention-days: 3
+
+  ffmpeg:
+    name: FFmpeg
+    needs: env
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    outputs:
+      sha: ${{ steps.src.outputs.sha }}
+      release: ${{ steps.src.outputs.release }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+      with:
+        repository: ${{ env.FFMPEG_REPO }}
+        ref: ${{ env.FFMPEG_REF }}
+        path: src/ffmpeg
+    - name: Source
+      id: src
+      run: |
+        echo "sha=$(git -C src/ffmpeg rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        echo "release=$(cat src/ffmpeg/RELEASE)" >> "$GITHUB_OUTPUT"
+        git -C src/ffmpeg log -1 --format='%H %s'
+    - name: Cache
+      id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ffstage.tar.zst
+        key: ffstage-${{ steps.src.outputs.sha }}-${{ needs.env.outputs.key }}-${{ hashFiles('.github/skybundle/ffmpeg.sh') }}
+    - uses: actions/download-artifact@v4
+      if: steps.cache.outputs.cache-hit != 'true'
+      with:
+        name: rootfs
+        path: /tmp/rootfs
+    - name: Configure and compile
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        set -eux
+        sudo apt-get update -q
+        sudo apt-get install -y -q qemu-user-static zstd
+        bash .github/skybundle/binfmt.sh arm
+        sudo mkdir -p $R
+        sudo tar --numeric-owner -I zstd -xpf /tmp/rootfs/rootfs.tar.zst -C $R
+        rm -f /tmp/rootfs/rootfs.tar.zst
+        sudo mount -t proc proc $R/proc
+        sudo mkdir -p $R/w
+        sudo mount --bind "$GITHUB_WORKSPACE" $R/w
+        sudo chroot $R /bin/bash /versions.sh
+        rc=0
+        sudo chroot $R /bin/bash /w/.github/skybundle/ffmpeg.sh || rc=$?
+        sudo chown -R "$(id -u)" out || true
+        [ $rc = 0 ]
+        sudo tar --numeric-owner -C $R/opt/ffstage -c . | zstd -T0 -6 > ffstage.tar.zst
+        ls -la ffstage.tar.zst
+    - uses: actions/cache/save@v4
+      if: steps.cache.outputs.cache-hit != 'true'
+      with:
+        path: ffstage.tar.zst
+        key: ffstage-${{ steps.src.outputs.sha }}-${{ needs.env.outputs.key }}-${{ hashFiles('.github/skybundle/ffmpeg.sh') }}
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ffstage
+        path: ffstage.tar.zst
+        compression-level: 0
+        retention-days: 3
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: ffmpeg-logs
+        path: out/ffmpeg
+        if-no-files-found: ignore
+        retention-days: 14
+
+  player:
+    name: exteplayer3 ${{ matrix.name }}
+    needs: [env, ffmpeg]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.env.outputs.matrix) }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+      with:
+        repository: ${{ matrix.repo }}
+        ref: ${{ matrix.ref }}
+        path: player
+    - uses: actions/download-artifact@v4
+      with:
+        name: rootfs
+        path: /tmp/rootfs
+    - uses: actions/download-artifact@v4
+      with:
+        name: ffstage
+        path: /tmp/ffstage
+    - name: Environment and test media
+      run: |
+        set -eux
+        git -C player log -1 --format='%H %s'
+        sudo apt-get update -q
+        sudo apt-get install -y -q qemu-user-static zstd ffmpeg
+        bash .github/skybundle/binfmt.sh arm
+        sudo mkdir -p $R
+        sudo tar --numeric-owner -I zstd -xpf /tmp/rootfs/rootfs.tar.zst -C $R
+        sudo mkdir -p $R/opt/ffstage
+        sudo tar --numeric-owner -I zstd -xpf /tmp/ffstage/ffstage.tar.zst -C $R/opt/ffstage
+        rm -rf /tmp/rootfs /tmp/ffstage
+        sudo mount -t proc proc $R/proc
+        sudo mkdir -p $R/w
+        sudo mount --bind "$GITHUB_WORKSPACE" $R/w
+        S=/tmp/samples
+        mkdir -p $S/hls
+        ffmpeg -v error -f lavfi -i testsrc2=size=320x180:rate=25 -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 6 -c:v libx264 -preset veryfast -g 25 -pix_fmt yuv420p -c:a aac -b:a 64k $S/sample.mp4
+        ffmpeg -v error -i $S/sample.mp4 -c copy -f mpegts $S/sample.ts
+        ffmpeg -v error -i $S/sample.mp4 -c copy -f hls -hls_time 2 -hls_playlist_type vod \
+            -master_pl_name master.m3u8 $S/hls/stream.m3u8
+        openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=localhost \
+            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' -days 30 \
+            -keyout $S/key.pem -out $S/crt.pem 2> /dev/null
+        cat $S/key.pem $S/crt.pem > $S/cert.pem
+        sudo cp -r $S $R/samples
+        ls -la $S $S/hls
+    - name: Compile, bundle, smoke tests
+      id: build
+      env:
+        NAME: ${{ matrix.name }}
+      run: |
+        set -ux
+        python3 .github/skybundle/https_server.py /tmp/samples /tmp/samples/cert.pem 8443 > /tmp/https.log 2>&1 &
+        sleep 2
+        curl -sk -o /dev/null -w 'https server: %{http_code}\n' https://127.0.0.1:8443/hls/master.m3u8
+        rc=0
+        sudo chroot $R /usr/bin/env NAME="$NAME" DEPS_RPATH="$DEPS_RPATH" HTTPS_PORT=8443 \
+            /bin/bash /w/.github/skybundle/player.sh || rc=$?
+        sudo chown -R "$(id -u)" out || true
+        tail -5 /tmp/https.log || true
+        echo "smoke=$rc" >> "$GITHUB_OUTPUT"
+        test -x out/player/bundle/bin/exteplayer3
+    - name: Manifest, GLIBC check, package
+      env:
+        NAME: ${{ matrix.name }}
+        PLAYER_DIR: ${{ github.workspace }}/player
+        PLAYER_REPO: ${{ matrix.repo }}
+        FFMPEG_SHA: ${{ needs.ffmpeg.outputs.sha }}
+        FFMPEG_RELEASE: ${{ needs.ffmpeg.outputs.release }}
+      run: |
+        export PLAYER_SHA=$(git -C player rev-parse HEAD)
+        bash .github/skybundle/package.sh out/player "$NAME" dist
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: exteplayer3-ff9-armv7ahf-${{ matrix.name }}
+        path: dist
+        if-no-files-found: ignore
+        retention-days: 30
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: logs-${{ matrix.name }}
+        path: |
+          out/player
+          !out/player/bundle
+        if-no-files-found: ignore
+        retention-days: 14
+    - name: Smoke tests
+      run: |
+        cat out/player/smoke.txt
+        [ "${{ steps.build.outputs.smoke }}" = 0 ]
