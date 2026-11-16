@@ -15,7 +15,11 @@ name: SonarCloud
 # notice and the run stays green.
 #
 # Actions -> SonarCloud -> Run workflow: ref = a branch or commit of this
-# repository to analyse (empty = the branch the workflow runs from).
+# repository to analyse (empty = the branch the workflow runs from),
+# ffmpeg = the FFmpeg to build against: 6.1 (as above, the default and the
+# only one for pushes and pull requests) or 9 (Masta2002/FFmpeg, the 9.0
+# series); the latter is analysed as SonarCloud branch "<ref>-ff9", so the
+# two never mix in one branch.
 
 on:
   push:
@@ -27,18 +31,24 @@ on:
       ref:
         description: Branch or commit to analyse (empty = the selected branch)
         default: ''
+      ffmpeg:
+        description: FFmpeg to build against (9 is analysed as SonarCloud branch <ref>-ff9)
+        type: choice
+        options: ['6.1', '9']
+        default: '6.1'
 
 permissions:
   contents: read
   pull-requests: read
 
 concurrency:
-  group: sonar-${{ github.event.pull_request.number || inputs.ref || github.ref }}
+  group: sonar-${{ github.event.pull_request.number || inputs.ref || github.ref }}-${{ inputs.ffmpeg || '6.1' }}
   cancel-in-progress: true
 
 env:
-  # same FFmpeg and cache key as the host tests (ci/host-tests), so either
-  # workflow can use the cache the other one saved (cache scope permitting)
+  # FFmpeg 6.1: same FFmpeg and cache key as the host tests (ci/host-tests),
+  # so either workflow can use the cache the other one saved (cache scope
+  # permitting); FFmpeg 9 is set by the step "Select FFmpeg"
   FFMPEG_REPO: skyjet18/FFmpeg
   FFMPEG_COMMIT: 0da0223cd1add40eabaad04e1ce609f05670a1de
   FFMPEG_CONFIGURE: --disable-autodetect --disable-doc --disable-ffplay --disable-debug --enable-libxml2 --enable-zlib
@@ -84,22 +94,56 @@ jobs:
         # full history: blame data and new-code detection
         fetch-depth: 0
 
+    # the commit and the SonarCloud branch of this analysis
+    - name: Analysis target
+      id: target
+      env:
+        REF: ${{ inputs.ref }}
+        FFMPEG_VARIANT: ${{ inputs.ffmpeg || '6.1' }}
+        EVENT: ${{ github.event_name }}
+      run: |
+        sha=$(git rev-parse HEAD)
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        branch=""
+        if [ "$EVENT" = workflow_dispatch ]; then
+          branch=${REF:-$GITHUB_REF_NAME}
+          if [ "$FFMPEG_VARIANT" = 9 ]; then branch="$branch-ff9"; fi
+        fi
+        echo "branch=$branch" >> "$GITHUB_OUTPUT"
+        echo "Analysing $sha (ref ${REF:-$GITHUB_REF_NAME}) against FFmpeg $FFMPEG_VARIANT, SonarCloud branch: ${branch:-automatic}" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Select FFmpeg
+      if: inputs.ffmpeg == '9'
+      run: |
+        {
+          echo "FFMPEG_REPO=Masta2002/FFmpeg"
+          echo "FFMPEG_COMMIT=edb5542423bda688cc73e3f41a0173790802d0ea"
+          echo "FFMPEG_CONFIGURE=--disable-autodetect --disable-doc --disable-ffplay --disable-debug --enable-version3 --enable-libxml2 --enable-openssl --enable-zlib"
+          echo "FFMPEG_EXTRA_LIBS=-lxml2 -lssl -lcrypto -lz"
+          echo "FFMPEG_SOURCE=/home/runner/ffmpeg9-host/src"
+          echo "FFMPEG_BUILD=/home/runner/ffmpeg9-host/build"
+          echo "FFMPEG_TEST_PROGRAMS="
+        } >> "$GITHUB_ENV"
+
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential pkg-config nasm libxml2-dev zlib1g-dev
+        sudo apt-get install -y build-essential pkg-config nasm libxml2-dev libssl-dev zlib1g-dev
 
+    # 6.1: ffmpeg-host-<commit>-<sum> as in the host tests; 9: ffmpeg9-host-...
     - name: FFmpeg cache key
       id: key
       run: |
         sum=$(printf '%s\n' "$FFMPEG_CONFIGURE" "$FFMPEG_TEST_PROGRAMS" "$ImageOS" | sha256sum | cut -c1-16)
-        echo "key=ffmpeg-host-$FFMPEG_COMMIT-$sum" >> "$GITHUB_OUTPUT"
+        dir=$(dirname "$FFMPEG_SOURCE")
+        echo "key=$(basename "$dir")-$FFMPEG_COMMIT-$sum" >> "$GITHUB_OUTPUT"
+        echo "path=$dir" >> "$GITHUB_OUTPUT"
 
     - name: Cache FFmpeg
       id: cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: /home/runner/ffmpeg-host
+        path: ${{ steps.key.outputs.path }}
         key: ${{ steps.key.outputs.key }}
 
     # identical to the host tests, test programs included, so that the
@@ -113,7 +157,7 @@ jobs:
         cd "$FFMPEG_BUILD"
         "$FFMPEG_SOURCE/configure" $FFMPEG_CONFIGURE
         make -j$(nproc)
-        make -j$(nproc) $FFMPEG_TEST_PROGRAMS
+        if [ -n "$FFMPEG_TEST_PROGRAMS" ]; then make -j$(nproc) $FFMPEG_TEST_PROGRAMS; fi
 
     - name: Install Build Wrapper
       uses: SonarSource/sonarqube-scan-action/install-build-wrapper@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
@@ -191,11 +235,15 @@ jobs:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       with:
         # The analysed ref (master, a pull request branch) may not carry
-        # sonar-project.properties, so the project settings are passed here.
+        # sonar-project.properties, or a different one, so the project
+        # settings are passed here (they win over the file). The revision is
+        # the checked-out commit, not the commit the workflow runs from.
         args: >
           --define sonar.projectKey=Masta2002_exteplayer3-sky
           --define sonar.organization=masta2002
+          --define sonar.sources=.
           --define sonar.sourceEncoding=UTF-8
+          --define sonar.scm.revision=${{ steps.target.outputs.sha }}
           --define sonar.exclusions=tests/**,external/**,ipk/**,.github/**
           --define sonar.cfamily.compile-commands=${{ env.BUILD_WRAPPER_OUT_DIR }}/compile_commands.json
-          ${{ inputs.ref && format('--define sonar.branch.name={0}', inputs.ref) || '' }}
+          ${{ steps.target.outputs.branch && format('--define sonar.branch.name={0}', steps.target.outputs.branch) || '' }}
