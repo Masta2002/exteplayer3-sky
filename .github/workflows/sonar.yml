@@ -1,0 +1,195 @@
+name: SonarCloud
+
+# Static analysis on SonarCloud (sonar-project.properties). The player is
+# compiled under SonarSource's build wrapper so the C analysis gets the real
+# compile commands:
+#  - the host player of tests/build.sh (the sources the receiver build
+#    compiles, with output/linuxdvb_fake.c in place of the device output),
+#    against a native build of the patched FFmpeg 6.1;
+#  - the receiver-only files the host build leaves out (device output for
+#    mipsel and sh4, external/ffmpeg/src/xiph.c), compiled one by one with
+#    the flags of exteplayer3_git.bb; a file that does not compile on the
+#    host is skipped and named in the job summary.
+#
+# Without the repository secret SONAR_TOKEN the analysis is skipped with a
+# notice and the run stays green.
+#
+# Actions -> SonarCloud -> Run workflow: ref = a branch or commit of this
+# repository to analyse (empty = the branch the workflow runs from).
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or commit to analyse (empty = the selected branch)
+        default: ''
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: sonar-${{ github.event.pull_request.number || inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # same FFmpeg and cache key as the host tests (ci/host-tests), so either
+  # workflow can use the cache the other one saved (cache scope permitting)
+  FFMPEG_REPO: skyjet18/FFmpeg
+  FFMPEG_COMMIT: 0da0223cd1add40eabaad04e1ce609f05670a1de
+  FFMPEG_CONFIGURE: --disable-autodetect --disable-doc --disable-ffplay --disable-debug --enable-libxml2 --enable-zlib
+  FFMPEG_EXTRA_LIBS: -lxml2 -lz
+  FFMPEG_SOURCE: /home/runner/ffmpeg-host/src
+  FFMPEG_BUILD: /home/runner/ffmpeg-host/build
+  FFMPEG_TEST_PROGRAMS: >-
+    libavformat/tests/hls_http libavformat/tests/dash_http
+    libavformat/tests/hls_selection libavformat/tests/dash_live libavformat/tests/mpegts_probe
+  BUILD_WRAPPER_OUT_DIR: /home/runner/bw-output
+
+jobs:
+  gate:
+    name: Token check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+    - name: SONAR_TOKEN set?
+      id: check
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      run: |
+        if [ -n "$SONAR_TOKEN" ]; then
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          echo "::notice title=SonarCloud analysis skipped::The repository secret SONAR_TOKEN is not set (or not available to this event), nothing to do."
+          echo "SonarCloud analysis skipped: the repository secret \`SONAR_TOKEN\` is not set." >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+  analysis:
+    name: Build and analyse
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ inputs.ref }}
+        # full history: blame data and new-code detection
+        fetch-depth: 0
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config nasm libxml2-dev zlib1g-dev
+
+    - name: FFmpeg cache key
+      id: key
+      run: |
+        sum=$(printf '%s\n' "$FFMPEG_CONFIGURE" "$FFMPEG_TEST_PROGRAMS" "$ImageOS" | sha256sum | cut -c1-16)
+        echo "key=ffmpeg-host-$FFMPEG_COMMIT-$sum" >> "$GITHUB_OUTPUT"
+
+    - name: Cache FFmpeg
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /home/runner/ffmpeg-host
+        key: ${{ steps.key.outputs.key }}
+
+    # identical to the host tests, test programs included, so that the
+    # cached directory is the same whichever workflow saved it
+    - name: Build FFmpeg
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p "$FFMPEG_SOURCE" "$FFMPEG_BUILD"
+        curl -sL --retry 5 --retry-all-errors "https://github.com/$FFMPEG_REPO/archive/$FFMPEG_COMMIT.tar.gz" -o "$RUNNER_TEMP/ff.tar.gz"
+        tar -xzf "$RUNNER_TEMP/ff.tar.gz" --strip-components=1 -C "$FFMPEG_SOURCE"
+        cd "$FFMPEG_BUILD"
+        "$FFMPEG_SOURCE/configure" $FFMPEG_CONFIGURE
+        make -j$(nproc)
+        make -j$(nproc) $FFMPEG_TEST_PROGRAMS
+
+    - name: Install Build Wrapper
+      uses: SonarSource/sonarqube-scan-action/install-build-wrapper@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
+
+    - name: Host player under the build wrapper
+      run: |
+        build-wrapper-linux-x86-64 --out-dir "$RUNNER_TEMP/bw-host" \
+          sh tests/build.sh "$RUNNER_TEMP/exteplayer3-host"
+
+    # Receiver-only sources, with the flags of the recipe. Each file is
+    # tried outside the wrapper first, so that only files that compile on
+    # the host end up in the compilation database.
+    - name: Receiver-only sources under the build wrapper
+      run: |
+        set -u
+        flags="-D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -D_LARGEFILE_SOURCE -DHAVE_FLV2MPEG4_CONVERTER"
+        flags="$flags -Wno-deprecated-declarations -Iinclude -Iexternal -Iexternal/flv2mpeg4"
+        flags="$flags -I$FFMPEG_SOURCE -I$FFMPEG_BUILD"
+        audio_get_pts="-DAUDIO_GET_PTS=_IOR('o', 19, __u64)"
+        python3 -c 'import json, os, sys
+        db = json.load(open(sys.argv[1]))
+        print("\n".join(sorted({os.path.relpath(os.path.join(e["directory"], e["file"])) for e in db})))' \
+          "$RUNNER_TEMP/bw-host/compile_commands.json" > "$RUNNER_TEMP/host-files.txt"
+        ok=""
+        {
+          echo "### Sources in the analysis"
+          echo
+          echo "Host player (tests/build.sh): $(wc -l < "$RUNNER_TEMP/host-files.txt") files"
+          echo
+          echo "| receiver-only file | compiled on the host |"
+          echo "|---|---|"
+        } >> "$GITHUB_STEP_SUMMARY"
+        for f in output/linuxdvb_mipsel.c external/ffmpeg/src/*.c output/writer/mipsel/*.c \
+                 output/linuxdvb_sh4.c output/writer/sh4/*.c; do
+          [ -f "$f" ] || continue
+          grep -qxF "$f" "$RUNNER_TEMP/host-files.txt" && continue
+          if cc $flags "$audio_get_pts" -fsyntax-only "$f" 2> "$RUNNER_TEMP/probe.log"; then
+            ok="$ok $f"
+            echo "| $f | yes |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| $f | no, skipped: $(grep -m1 'error' "$RUNNER_TEMP/probe.log" | sed 's/|/\\|/g' | cut -c1-160) |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::group::$f does not compile on the host"; cat "$RUNNER_TEMP/probe.log"; echo "::endgroup::"
+          fi
+        done
+        mkdir -p "$RUNNER_TEMP/extra-obj"
+        printf '%s\n' $ok > "$RUNNER_TEMP/extra-files.txt"
+        cat > "$RUNNER_TEMP/extra.sh" <<'EOF'
+        set -eu
+        while read -r f; do
+          [ -n "$f" ] || continue
+          cc $FLAGS "$AUDIO_GET_PTS" -c "$f" -o "$OBJ/$(echo "$f" | tr / _).o"
+        done < "$LIST"
+        EOF
+        FLAGS="$flags" AUDIO_GET_PTS="$audio_get_pts" OBJ="$RUNNER_TEMP/extra-obj" LIST="$RUNNER_TEMP/extra-files.txt" \
+          build-wrapper-linux-x86-64 --out-dir "$RUNNER_TEMP/bw-extra" sh "$RUNNER_TEMP/extra.sh"
+
+    - name: Merge the compilation databases
+      run: |
+        mkdir -p "$BUILD_WRAPPER_OUT_DIR"
+        python3 -c 'import json, sys
+        out = []
+        for p in sys.argv[2:]:
+            try:
+                out += json.load(open(p))
+            except FileNotFoundError:
+                pass
+        json.dump(out, open(sys.argv[1], "w"), indent=1)
+        print(len(out), "compile commands")' \
+          "$BUILD_WRAPPER_OUT_DIR/compile_commands.json" \
+          "$RUNNER_TEMP/bw-host/compile_commands.json" "$RUNNER_TEMP/bw-extra/compile_commands.json"
+
+    - name: SonarCloud scan
+      uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      with:
+        args: >
+          --define sonar.cfamily.compile-commands=${{ env.BUILD_WRAPPER_OUT_DIR }}/compile_commands.json
+          ${{ inputs.ref && format('--define sonar.branch.name={0}', inputs.ref) || '' }}
