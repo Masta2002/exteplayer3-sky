@@ -253,5 +253,6 @@ jobs:
           --define sonar.sourceEncoding=UTF-8
           --define sonar.scm.revision=${{ steps.target.outputs.sha }}
           --define sonar.exclusions=tests/**,external/**,ipk/**,.github/**
+          --define sonar.coverage.exclusions=**
           --define sonar.cfamily.compile-commands=${{ env.BUILD_WRAPPER_OUT_DIR }}/compile_commands.json
           ${{ steps.target.outputs.branch && format('--define sonar.branch.name={0}', steps.target.outputs.branch) || '' }}
