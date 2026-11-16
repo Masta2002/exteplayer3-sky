@@ -190,6 +190,12 @@ jobs:
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       with:
+        # The analysed ref (master, a pull request branch) may not carry
+        # sonar-project.properties, so the project settings are passed here.
         args: >
+          --define sonar.projectKey=Masta2002_exteplayer3-sky
+          --define sonar.organization=masta2002
+          --define sonar.sourceEncoding=UTF-8
+          --define sonar.exclusions=tests/**,external/**,ipk/**,.github/**
           --define sonar.cfamily.compile-commands=${{ env.BUILD_WRAPPER_OUT_DIR }}/compile_commands.json
           ${{ inputs.ref && format('--define sonar.branch.name={0}', inputs.ref) || '' }}
