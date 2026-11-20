@@ -36,7 +36,7 @@ sudo cp -L /etc/resolv.conf "$R/etc/resolv.conf"
 sudo mount -t proc proc "$R/proc"
 sudo chroot "$R" apt-get update -q
 sudo chroot "$R" env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --force-yes \
-    build-essential pkg-config perl file chrpath binutils make \
+    build-essential pkg-config perl file chrpath binutils make cmake \
     zlib1g-dev libbz2-dev liblzma-dev libasound2-dev libfreetype6-dev libtheora-dev
 sudo chroot "$R" apt-get clean
 
@@ -56,6 +56,7 @@ fetch "$OPENSSL_URL" "$OPENSSL_SHA256"
 fetch "$LIBXML2_URL" "$LIBXML2_SHA256"
 fetch "$UDFREAD_URL" "$UDFREAD_SHA256"
 fetch "$BLURAY_URL" "$BLURAY_SHA256"
+fetch "$SRT_URL" "$SRT_SHA256"
 git init -q $SRCS/rtmpdump
 git -C $SRCS/rtmpdump fetch -q --depth 1 "$RTMPDUMP_GIT" "$RTMPDUMP_COMMIT"
 git -C $SRCS/rtmpdump checkout -q FETCH_HEAD

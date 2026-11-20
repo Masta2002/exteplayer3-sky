@@ -19,14 +19,16 @@ BD=$OUT/bundle
 L=$BD/lib/exteplayer3_deps
 # NEEDED libraries the image has to provide (the package of skyjet18 takes
 # the same ones from the image); everything else is bundled. The MIPS
-# package bundles liblzma itself, so does this one.
+# package bundles liblzma itself, so does this one. libstdc++ (needed by
+# libsrt): every Enigma2 image has it (Enigma2 is C++); the one of jessie
+# (GCC 4.9) sets the highest GLIBCXX_ version used.
 case ${ARCH:-armhf} in
     armhf)
         IMAGE_LIBS="ld-linux-armhf.so.3 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libgcc_s.so.1
-                    libz.so.1 liblzma.so.5 libasound.so.2 libfreetype.so.6" ;;
+                    libstdc++.so.6 libz.so.1 liblzma.so.5 libasound.so.2 libfreetype.so.6" ;;
     mipsel)
         IMAGE_LIBS="ld.so.1 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libgcc_s.so.1
-                    libz.so.1 libasound.so.2 libfreetype.so.6" ;;
+                    libstdc++.so.6 libz.so.1 libasound.so.2 libfreetype.so.6" ;;
 esac
 rm -rf $OUT
 mkdir -p $OUT $BD/bin $L
@@ -208,7 +210,8 @@ run ffmpeg_input_mp4 'Stream #0:1.*Audio: aac' $FFM -hide_banner -i /samples/sam
 run decode_h264 '' $FFM -v error -i /samples/sample.mp4 -map 0:v -c:v rawvideo -f rawvideo -y /dev/null
 run decode_aac '' $FFM -v error -i /samples/sample.ts -map 0:a -c:a aac -f adts -y /dev/null
 run probe_hls_file '^h264' $FFP -v error -show_entries stream=codec_name -of csv=p=0 /samples/hls/master.m3u8
-run protocols 'https' sh -c "$FFM -hide_banner -protocols 2>/dev/null | tr -d ' ' | grep -xE 'https|tls|rtmp|rtmps|ffrtmp|librtmp|bluray' | sort -u | tr '\n' ' '"
+run protocols 'https' sh -c "$FFM -hide_banner -protocols 2>/dev/null | tr -d ' ' | grep -xE 'https|tls|rtmp|rtmps|ffrtmp|librtmp|bluray|srt' | sort -u | tr '\n' ' '"
+run protocol_srt '^srt$' sh -c "$FFM -hide_banner -protocols 2>/dev/null | tr -d ' ' | grep -x srt"
 U=https://127.0.0.1:${HTTPS_PORT:-8443}
 run https_noverify '^h264' $FFP -v error -tls_verify 0 -show_entries stream=codec_name -of csv=p=0 $U/hls/master.m3u8
 # default verification with the CA file of OPENSSLDIR (/etc/ssl/cert.pem),

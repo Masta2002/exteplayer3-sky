@@ -25,6 +25,8 @@
 #     --extra-ldflags: -L/-rpath-link of /opt/deps added
 #     OpenSSL 3.5 instead of 1.0.1j, librtmp 2.6, libbluray 1.3.4,
 #     libxml2 2.9.14 (all from /opt/deps)
+#     --enable-libsrt instead of --disable-libsrt (libsrt 1.5.4 from
+#     /opt/deps), as in the FFmpeg 9 recipe of OE-Alliance
 set -eu
 . /w/.github/skybundle/versions.sh
 SRC=/w/src/ffmpeg
@@ -77,7 +79,7 @@ ARGS=(--disable-stripping --enable-pic --enable-shared --enable-pthreads --enabl
       --enable-avformat --enable-bzlib --disable-libdav1d --disable-libfdk-aac --enable-gpl --disable-libgsm
       --disable-indev=jack --enable-libbluray --enable-protocol=bluray --enable-libfreetype --disable-libopus
       --enable-librtmp --disable-libv4l2 --disable-libvorbis --enable-libxml2 --enable-lzma --disable-libmfx
-      --disable-libmp3lame --enable-openssl --disable-sdl2 --disable-libspeex --disable-libsrt
+      --disable-libmp3lame --enable-openssl --disable-sdl2 --disable-libspeex --enable-libsrt
       --enable-swresample --enable-swscale --enable-libtheora --disable-libv4l2 --disable-vaapi
       --disable-vdpau --disable-libvpx --disable-libx265 --disable-libxcb --disable-outdev=xv --enable-zlib)
 printf '%s\n' "${ARGS[@]}" > $OUT/options.txt
@@ -94,9 +96,13 @@ cp ffbuild/config.log config.h ffbuild/config.mak $OUT/
 grep -E '^(ARCH|C compiler|C library|runtime cpu detection|standalone assembly|inline assembly|ARMv|VFP|NEON|THUMB|MIPS|MMI|MSA|License|network support)' $OUT/configure.log
 sed -n '/^External libraries:/,/^$/p' $OUT/configure.log
 # what the line asks for and configure did not enable
-for want in alsa bzlib libbluray libfreetype librtmp libtheora libxml2 lzma openssl zlib; do
+for want in alsa bzlib libbluray libfreetype librtmp libtheora libxml2 lzma openssl zlib libsrt; do
     grep -q "^#define CONFIG_$(echo $want | tr a-z A-Z) 1" config.h || { echo "ERROR: $want not enabled"; exit 1; }
 done
+# libavformat/libsrt.c uses IN6_IS_ADDR_* (via srt.h); in glibc 2.19 these
+# macros need s6_addr32, which <netinet/in.h> only defines with __USE_MISC,
+# not with the _XOPEN_SOURCE=600 of FFmpeg: _GNU_SOURCE for this file only
+echo 'libavformat/libsrt.o: CPPFLAGS += -D_GNU_SOURCE' >> ffbuild/config.mak
 
 echo "======== make"
 START=$(date +%s)
