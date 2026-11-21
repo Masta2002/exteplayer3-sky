@@ -33,11 +33,11 @@ permissions:
 env:
   # skyjet18/FFmpeg, branch release/6.1-patched
   FFMPEG_REPO: skyjet18/FFmpeg
-  FFMPEG_COMMIT: 0da0223cd1add40eabaad04e1ce609f05670a1de
+  FFMPEG_COMMIT: 4ab44292c9cd5543ba9de17594c32d88f09506c7
   # static libraries, the ffmpeg tool for the generated test media, libxml2
   # for DASH; nothing picked up from the runner by chance
-  FFMPEG_CONFIGURE: --disable-autodetect --disable-doc --disable-ffplay --disable-debug --enable-libxml2 --enable-zlib
-  FFMPEG_EXTRA_LIBS: -lxml2 -lz
+  FFMPEG_CONFIGURE: --disable-autodetect --disable-doc --disable-ffplay --disable-debug --enable-libxml2 --enable-zlib --enable-openssl
+  FFMPEG_EXTRA_LIBS: -lxml2 -lz -lssl -lcrypto
   FFMPEG_SOURCE: /home/runner/ffmpeg-host/src
   FFMPEG_BUILD: /home/runner/ffmpeg-host/build
   FFMPEG_TEST_PROGRAMS: >-
