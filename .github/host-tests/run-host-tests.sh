@@ -201,6 +201,12 @@ else
   fi
 fi
 
+# ---- tests/idle_cpu.py (temporary step) ---------------------------------
+what="CPU time and wake-ups of a paused player, FIFO decoders; commands after a continue; -b 8 with a sleeping driver poll"
+if full && have tests/idle_cpu.py && [ $timing = yes ]; then
+  step idle_cpu 600 "$what"     python3 tests/idle_cpu.py --player "$OUT/exteplayer3-timing" --ffmpeg "$FF"     --audio-output "$APES" --video-output "$VPES"
+fi
+
 # ---- summary -------------------------------------------------------------
 {
   echo "### $REF_NAME ($(git -C "$UT" rev-parse --short=10 HEAD))"
