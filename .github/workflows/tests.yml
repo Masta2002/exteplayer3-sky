@@ -20,7 +20,7 @@ name: Tests
 
 on:
   push:
-    branches: [master]
+    branches: [master, ci/ffmpeg-oea-series]
   pull_request:
   workflow_dispatch:
 
@@ -43,18 +43,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # the FFmpeg of the prebuilt ipks in ipk/
-          - ffmpeg: '6.1'
-            branch: release/6.1-patched
-            configure: --enable-libxml2 --enable-zlib
-            libs: -lxml2 -lz
           # with OpenSSL, so the HTTPS tests run as well
           - ffmpeg: '9'
+            repo: skyjet18/FFmpeg
             branch: release/9.0-patched
             configure: --enable-libxml2 --enable-zlib --enable-openssl
             libs: -lxml2 -lz -lssl -lcrypto
+          # FFmpeg n9.0.2 with the OE-A patch files (helper branch the
+          # patch series is generated from)
+          - ffmpeg: '9-oea-series'
+            repo: Masta2002/FFmpeg
+            branch: oea/9.0.2-series
+            configure: --enable-libxml2 --enable-zlib --enable-openssl
+            libs: -lxml2 -lz -lssl -lcrypto
     env:
-      FFMPEG_REPO: skyjet18/FFmpeg
+      FFMPEG_REPO: ${{ matrix.repo }}
       FFMPEG_BRANCH: ${{ matrix.branch }}
       # static libraries, the ffmpeg tool for the generated test media; no
       # library is picked up from the runner by chance (--disable-autodetect)
