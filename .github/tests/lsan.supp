@@ -1,0 +1,10 @@
+# LeakSanitizer suppressions of the leak run (tsan.yml, job "leaks").
+#
+# Only for leaks the player cannot fix: allocations that FFmpeg, the C
+# library or OpenSSL make for themselves and never free, independent of how
+# the player uses them. Every entry says why. A leak whose stack goes
+# through the player's own code (container/, main/, output/, manager/,
+# playback/, tools/) is never suppressed here: the player may have missed a
+# close or free, that is what the run is for.
+#
+# Format: leak:<function, file or library name>

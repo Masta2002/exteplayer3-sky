@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
-# Runs the host tests that play through the whole player with a
-# ThreadSanitizer build of the host player (tests/build.sh) and collects the
-# reports of TSan: one directory per test, one file per player process
-# (<work>/reports/<test>/tsan.<pid>). A measuring tool: a test that fails
-# or runs out of time under TSan is noted, the script still ends with 0.
+# Runs the host tests that play through the whole player with a sanitizer
+# build of the host player (tests/build.sh) and collects the reports: one
+# directory per test, one file per player process
+# (<work>/reports/<test>/<san>.<pid>). A measuring tool: a test that fails
+# or runs out of time under the sanitizer is noted, the script still ends
+# with 0.
+#
+# SAN=tsan (default): ThreadSanitizer, every data race / lock order report.
+# SAN=lsan: AddressSanitizer with LeakSanitizer on (the normal ASan step of
+#           tests.yml runs with detect_leaks=0); the leak report is written
+#           when the player ends with exit() (q, end of stream), not on the
+#           _exit() of the stop signal fallbacks. Suppressions:
+#           .github/tests/lsan.supp.
 #
 # usage: run-tsan-tests.sh <exteplayer3 tree> <work directory>
 # needs: FFMPEG_SOURCE, FFMPEG_BUILD, FFMPEG_EXTRA_LIBS (see tests.yml);
@@ -23,6 +31,12 @@ VPES=$OUT/video.pes
 RESULTS=$W/results.tsv
 : > "$RESULTS"
 TESTS=${TESTS:-}
+SAN=${SAN:-tsan}
+case $SAN in
+  tsan) SAN_CFLAGS="-fsanitize=thread -O1 -fno-omit-frame-pointer" ;;
+  lsan) SAN_CFLAGS="-fsanitize=address -fno-omit-frame-pointer" ;;
+  *) echo "SAN must be tsan or lsan" >&2; exit 2 ;;
+esac
 
 selected() { [ -z "$TESTS" ] || case ",$TESTS," in *",$1,"*) true;; *) false;; esac; }
 note() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$RESULTS"; }
@@ -34,15 +48,29 @@ tsan_options() { # tsan_options <test id>
   mkdir -p "$W/reports/$1"
   echo "halt_on_error=0 exitcode=0 report_signal_unsafe=0 second_deadlock_stack=1 history_size=7 log_path=$W/reports/$1/tsan"
 }
+# detect_leaks=1 with exitcode=0: the leak report does not change the exit
+# status the tests check; report_objects=1: the address of every object
+asan_options() { # asan_options <test id>
+  mkdir -p "$W/reports/$1"
+  echo "detect_leaks=1:exitcode=0:log_path=$W/reports/$1/lsan:malloc_context_size=30"
+}
+lsan_options() {
+  echo "report_objects=1:exitcode=0:suppressions=$UT/.github/tests/lsan.supp:print_suppressions=1"
+}
 
-# step <id> <seconds> <command...>: under TSan, result noted, never fatal
+# step <id> <seconds> <command...>: under the sanitizer, result noted, never fatal
 step() {
   local id=$1 tmo=$2 start=$SECONDS state rc
   shift 2
   rm -f "$FIFO" "$APES" "$VPES"
   echo "::group::$id"
   echo "+ $*"
-  (cd "$UT" && TSAN_OPTIONS=$(tsan_options "$id") timeout -k 10 "$tmo" "$@") 2>&1 | tee "$W/logs/$id.log"
+  if [ "$SAN" = tsan ]; then
+    (cd "$UT" && TSAN_OPTIONS=$(tsan_options "$id") timeout -k 10 "$tmo" "$@") 2>&1 | tee "$W/logs/$id.log"
+  else
+    (cd "$UT" && ASAN_OPTIONS=$(asan_options "$id") LSAN_OPTIONS=$(lsan_options) \
+      timeout -k 10 "$tmo" "$@") 2>&1 | tee "$W/logs/$id.log"
+  fi
   rc=${PIPESTATUS[0]}
   echo "::endgroup::"
   case $rc in
@@ -58,7 +86,7 @@ build() {
   local name=$1 start=$SECONDS rc
   shift
   echo "::group::build $name"
-  (cd "$UT" && env "CFLAGS=-fsanitize=thread -O1 -fno-omit-frame-pointer -DPCM_EXPORT_PATH=\"$FIFO\"" "$@" \
+  (cd "$UT" && env "CFLAGS=$SAN_CFLAGS -DPCM_EXPORT_PATH=\"$FIFO\"" "$@" \
     sh tests/build.sh "$OUT/exteplayer3-$name") 2>&1 | tee "$W/logs/build-$name.log"
   rc=${PIPESTATUS[0]}
   echo "::endgroup::"
@@ -112,12 +140,12 @@ if [ $timing = yes ]; then
 fi
 
 {
-  echo "### Host tests under ThreadSanitizer: exteplayer3 $(git -C "$UT" rev-parse --short=10 HEAD)"
+  echo "### Host tests under $SAN: exteplayer3 $(git -C "$UT" rev-parse --short=10 HEAD)"
   echo
-  echo "The results only say whether a test still passed with the slower TSan player;"
+  echo "The results only say whether a test still passed with the slower sanitizer player;"
   echo "what counts are the reports below."
   echo
-  echo "| step | result | time | TSan log files |"
+  echo "| step | result | time | $SAN log files |"
   echo "|---|---|---|---|"
   while IFS=$'\t' read -r id state time; do
     n=$(find "$W/reports/$id" -type f 2>/dev/null | wc -l)
