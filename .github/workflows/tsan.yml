@@ -1,0 +1,122 @@
+name: ThreadSanitizer
+
+# A measuring tool, not a test that passes or fails: builds the host player
+# of tests/build.sh with ThreadSanitizer (-fsanitize=thread) against the
+# patched FFmpeg 9 of skyjet18/FFmpeg and runs the host tests that play
+# through the whole player (several threads: the demux thread, the output
+# threads, the command loop) under it. Every report of TSan is collected
+# (halt_on_error=0, one log file per player process); the job summary lists
+# the unique ones, the logs are attached to the run ("tsan-reports").
+#
+# FFmpeg itself is not instrumented: races inside FFmpeg are not seen, its
+# locks are (TSan intercepts the pthread calls of the whole process).
+#
+# Only by hand (Actions -> ThreadSanitizer -> Run workflow), so it never
+# makes the CI of a push or a pull request red. The tests themselves may
+# fail under TSan (it makes the player 5-15 times slower and some of them
+# check timing); that does not fail the job either.
+
+on:
+  # a push to a branch of this name runs it too (a workflow that is only
+  # on another branch than the default one cannot be started by hand)
+  push:
+    branches: [ci/tsan]
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: 'Only these tests (integration, cover, chapters, first_keyframe, hls_switch-export, hls_switch-compressed, hls_switch-software, hls_switch-timing), comma separated. Empty = all.'
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tsan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tsan:
+    name: TSan, FFmpeg 9
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      FFMPEG_REPO: skyjet18/FFmpeg
+      FFMPEG_BRANCH: release/9.0-patched
+      # the same build as the FFmpeg 9 job of tests.yml (same cache key)
+      FFMPEG_CONFIGURE: --disable-autodetect --disable-doc --disable-ffplay --disable-debug --enable-libxml2 --enable-zlib --enable-openssl
+      FFMPEG_EXTRA_LIBS: -lxml2 -lz -lssl -lcrypto
+      FFMPEG_TEST_PROGRAMS: >-
+        libavformat/tests/hls_http libavformat/tests/dash_http
+        libavformat/tests/hls_selection libavformat/tests/dash_live libavformat/tests/mpegts_probe
+      FFMPEG_SOURCE: /home/runner/ffmpeg-9/src
+      FFMPEG_BUILD: /home/runner/ffmpeg-9/build
+    steps:
+    - name: Check out this repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Current commit of release/9.0-patched
+      id: ffmpeg
+      run: |
+        sha=$(git ls-remote "https://github.com/$FFMPEG_REPO" "refs/heads/$FFMPEG_BRANCH" | cut -f1)
+        if [ -z "$sha" ]; then
+          echo "::error::branch $FFMPEG_BRANCH not found in $FFMPEG_REPO"
+          exit 1
+        fi
+        sum=$(printf '%s\n' "$FFMPEG_CONFIGURE" "$FFMPEG_TEST_PROGRAMS" "$ImageOS" | sha256sum | cut -c1-16)
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        echo "key=ffmpeg-9-$sha-$sum" >> "$GITHUB_OUTPUT"
+
+    - name: Install packages
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q build-essential pkg-config nasm libxml2-dev zlib1g-dev libssl-dev
+
+    - name: FFmpeg from the cache
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /home/runner/ffmpeg-9
+        key: ${{ steps.ffmpeg.outputs.key }}
+
+    - name: Build FFmpeg
+      if: steps.cache.outputs.cache-hit != 'true'
+      env:
+        SHA: ${{ steps.ffmpeg.outputs.sha }}
+      run: |
+        mkdir -p "$FFMPEG_SOURCE" "$FFMPEG_BUILD"
+        curl --proto '=https' -sSL --retry 5 --retry-all-errors "https://github.com/$FFMPEG_REPO/archive/$SHA.tar.gz" -o "$RUNNER_TEMP/ffmpeg.tar.gz"
+        tar -xzf "$RUNNER_TEMP/ffmpeg.tar.gz" --strip-components=1 -C "$FFMPEG_SOURCE"
+        cd "$FFMPEG_BUILD"
+        "$FFMPEG_SOURCE/configure" $FFMPEG_CONFIGURE
+        make -j$(nproc)
+        make -j$(nproc) $FFMPEG_TEST_PROGRAMS
+
+    # TSan of GCC 13 cannot map its shadow memory with the 32 bits of mmap
+    # randomisation of the runner kernel ("unexpected memory mapping")
+    - name: Address space for TSan
+      run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+    - name: Host tests under ThreadSanitizer
+      env:
+        TESTS: ${{ inputs.tests }}
+      run: bash .github/tests/run-tsan-tests.sh . "$RUNNER_TEMP/tsan"
+
+    - name: Unique reports
+      if: ${{ !cancelled() }}
+      run: |
+        python3 .github/tests/tsan_report.py "$RUNNER_TEMP/tsan/reports" \
+          --json "$RUNNER_TEMP/tsan/unique.json" > "$RUNNER_TEMP/tsan/unique.md"
+        cat "$RUNNER_TEMP/tsan/unique.md" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Keep the reports
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: tsan-reports
+        path: |
+          ${{ runner.temp }}/tsan/reports
+          ${{ runner.temp }}/tsan/logs
+          ${{ runner.temp }}/tsan/unique.md
+          ${{ runner.temp }}/tsan/unique.json
+        if-no-files-found: ignore
+        retention-days: 14
